@@ -27,6 +27,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 syntax = "proto3";
+option java_multiple_files = true;
 package containerd.types;
 
 import "google/protobuf/descriptor.proto";

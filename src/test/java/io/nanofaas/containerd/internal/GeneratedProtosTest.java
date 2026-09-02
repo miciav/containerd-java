@@ -16,16 +16,15 @@ class GeneratedProtosTest {
         assertThat(containerd.services.events.v1.EventsGrpc.class).isNotNull();
         assertThat(containerd.services.transfer.v1.TransferGrpc.class).isNotNull();
         assertThat(containerd.services.content.v1.ContentGrpc.class).isNotNull();
-        // messages used by later tasks.
-        // Upstream v2.2.1 protos declare no java_multiple_files/java_package, so protoc emits
-        // one file-named outer class per .proto with messages nested inside (proto package
-        // == java package); the java_package-free package names below are verbatim upstream.
-        assertThat(containerd.types.MountOuterClass.Mount.class).isNotNull(); // mount.proto
-        assertThat(containerd.types.Event.Envelope.class).isNotNull(); // event.proto
-        assertThat(containerd.v1.types.Task.Process.class).isNotNull(); // task/task.proto, proto package containerd.v1.types in v2.2.1
-        assertThat(containerd.types.transfer.Registry.OCIRegistry.class).isNotNull(); // transfer/registry.proto
-        assertThat(containerd.types.transfer.Imagestore.ImageStore.class).isNotNull(); // transfer/imagestore.proto
-        assertThat(containerd.events.Task.TaskStart.class).isNotNull(); // events/task.proto
-        assertThat(containerd.events.Task.TaskDelete.class).isNotNull(); // events/task.proto
+        // messages used by later tasks (vendored protos are patched with
+        // option java_multiple_files = true; by scripts/vendor-protos.sh, so protoc
+        // emits flat classes named after the messages, package = proto package)
+        assertThat(containerd.types.Mount.class).isNotNull();
+        assertThat(containerd.types.Envelope.class).isNotNull();
+        assertThat(containerd.v1.types.Process.class).isNotNull(); // task/task.proto: proto package is containerd.v1.types at v2.2.1
+        assertThat(containerd.types.transfer.OCIRegistry.class).isNotNull();
+        assertThat(containerd.types.transfer.ImageStore.class).isNotNull();
+        assertThat(containerd.events.TaskStart.class).isNotNull();
+        assertThat(containerd.events.TaskDelete.class).isNotNull();
     }
 }

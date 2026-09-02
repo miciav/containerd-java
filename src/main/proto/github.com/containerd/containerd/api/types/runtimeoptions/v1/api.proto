@@ -1,5 +1,6 @@
 // To regenerate api.pb.go run `make protos`
 syntax = "proto3";
+option java_multiple_files = true;
 
 package runtimeoptions.v1;
 
