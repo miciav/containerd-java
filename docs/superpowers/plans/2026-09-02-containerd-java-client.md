@@ -339,7 +339,7 @@ git add -A && git commit -m "build: vendor containerd v2.2.1 protos and generate
 - Produces (used by every later task):
   - `Version record Version(String version, String revision)`
   - `interface ContainerdClient extends AutoCloseable { Version version(); String namespace(); String snapshotter(); String runtimeName(); void close(); static Builder builder(); }`
-  - `class ContainerdClientBuilder { Builder socketPath(String); Builder namespace(String); Builder snapshotter(String); Builder runtimeName(String); Builder runtimeBinaryName(String); Builder platform(Platform); ContainerdClient build(); }` — defaults `/run/containerd/containerd.sock`, `nanofaas`, `overlayfs`, `io.containerd.runc.v2`, `null` binaryName, `linux/amd64`.
+  - `class ContainerdClientBuilder { Builder socketPath(String); Builder namespace(String); Builder snapshotter(String); Builder runtimeName(String); Builder runtimeBinaryName(String); ContainerdClient build(); }` — defaults `/run/containerd/containerd.sock`, `nanofaas`, `overlayfs`, `io.containerd.runc.v2`, `null` binaryName. (No `platform(Platform)` builder method — platform is passed per-operation, e.g. `Images.pull(String, Platform)`, defaulting to `Platform.linuxAmd64()`; corrected after Task 3 review M3.)
   - `class GrpcChannelFactory { static ManagedChannel createUnixDomainSocketChannel(String socketPath); }`
   - `class NamespaceInterceptor implements ClientInterceptor` (ctor takes namespace)
 
