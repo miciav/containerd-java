@@ -41,7 +41,7 @@ These were verified against the actual v2.2.1 sources — **do not "correct" the
 
 ## Global Constraints
 
-- containerd API pinned to **v2.2.1**; proto files vendored verbatim from that tag into `src/main/proto` preserving import paths (`github.com/containerd/containerd/api/...`). Upgrades = replace vendored files + bump a `containerdApiVersion` property in `build.gradle.kts`.
+- containerd API pinned to **v2.2.1**; proto files vendored from that tag into `src/main/proto` preserving import paths (`github.com/containerd/containerd/api/...`), via the committed `scripts/vendor-protos.sh`. Message/RPC definitions are verbatim; the script additionally appends `option java_multiple_files = true;` to every file (and `java_outer_classname = "ImageEvents"` to `events/image.proto`) — pure Java codegen-layout options, no API-surface change (Rulings R7-B, R10). Upgrades = re-run the vendor script with the new tag + bump `containerdApiVersion` in `build.gradle.kts`.
 - Java 21 toolchain; Gradle wrapper 9.7.1; `./gradlew clean build` must pass; integration tests via `./gradlew integrationTest` only.
 - **Never** shell out to `ctr`/`nerdctl`/Docker/mkfifo binaries or any CLI. FIFOs are created with jnr-posix `POSIX.mkfifo`.
 - No generated protobuf/gRPC classes in public API signatures (`io.nanofaas.containerd` and `io.nanofaas.containerd.spi` only). Generated classes stay inside `internal`.
@@ -239,7 +239,7 @@ git commit -m "chore: gradle bootstrap with Java 21 toolchain, grpc/protobuf dep
 
 **Interfaces:**
 - Consumes: Gradle project from Task 1.
-- Produces: generated Java classes in packages `containerd.services.*`, `containerd.types`, `containerd.types.task`, `containerd.types.transfer`, `containerd.events` (no `option java_package` in these protos, so the proto package IS the Java package — that's fine, they stay internal). Service stubs: `containerd.services.version.v1.VersionGrpc`, `containerd.services.containers.v1.ContainersGrpc`, `containerd.services.tasks.v1.TasksGrpc`, `containerd.services.snapshots.v1.SnapshotsGrpc`, `containerd.services.images.v1.ImagesGrpc`, `containerd.services.events.v1.EventsGrpc`, `containerd.services.transfer.v1.TransferGrpc`, `containerd.services.content.v1.ContentGrpc`.
+- Produces: generated Java classes in packages `containerd.services.*`, `containerd.types`, `containerd.v1.types` (the `api/types/task/task.proto` file declares `package containerd.v1.types`), `containerd.types.transfer`, `containerd.runc.v1`, `containerd.events`. All 23 vendored protos get `option java_multiple_files = true;` added by the committed `scripts/vendor-protos.sh` (Ruling R7-B: pure codegen-layout option, zero API-surface change; `events/image.proto` additionally gets `java_outer_classname = "ImageEvents"` to avoid a protoc output collision with the `Image` message — Ruling R10). Service stubs: `containerd.services.version.v1.VersionGrpc`, `containerd.services.containers.v1.ContainersGrpc`, `containerd.services.tasks.v1.TasksGrpc`, `containerd.services.snapshots.v1.SnapshotsGrpc`, `containerd.services.images.v1.ImagesGrpc`, `containerd.services.events.v1.EventsGrpc`, `containerd.services.transfer.v1.TransferGrpc`, `containerd.services.content.v1.ContentGrpc`.
 
 - [ ] **Step 1: Vendor the protos**
 
@@ -301,7 +301,7 @@ class GeneratedProtosTest {
         // messages used by later tasks
         assertThat(containerd.types.Mount.class).isNotNull();
         assertThat(containerd.types.Envelope.class).isNotNull();
-        assertThat(containerd.types.task.Process.class).isNotNull();
+        assertThat(containerd.v1.types.Process.class).isNotNull();
         assertThat(containerd.types.transfer.OCIRegistry.class).isNotNull();
         assertThat(containerd.types.transfer.ImageStore.class).isNotNull();
         assertThat(containerd.events.TaskStart.class).isNotNull();
@@ -1013,8 +1013,8 @@ class ProtoMapperTest {
 
     @Test
     void mapsTaskStatusEnum() {
-        assertThat(ProtoMapper.mapStatus(containerd.types.task.Status.RUNNING.getNumber())).isEqualTo(ContainerState.RUNNING);
-        assertThat(ProtoMapper.mapStatus(containerd.types.task.Status.STOPPED.getNumber())).isEqualTo(ContainerState.STOPPED);
+        assertThat(ProtoMapper.mapStatus(containerd.v1.types.Status.RUNNING.getNumber())).isEqualTo(ContainerState.RUNNING);
+        assertThat(ProtoMapper.mapStatus(containerd.v1.types.Status.STOPPED.getNumber())).isEqualTo(ContainerState.STOPPED);
         assertThat(ProtoMapper.mapStatus(999)).isEqualTo(ContainerState.UNKNOWN);
     }
 
@@ -1380,7 +1380,7 @@ public final class ProtoMapper {
 }
 ```
 
-Note: `mapStatus` uses raw enum numbers per the vendored `containerd.types.task.Status` — add an assertion in the test step that `containerd.types.task.Status.CREATED.getNumber() == 1` etc.; if the vendored proto differs, update the switch from the generated enum, not from memory.
+Note: `mapStatus` uses raw enum numbers per the vendored `containerd.v1.types.Status` (the `api/types/task/task.proto` file's proto package is `containerd.v1.types` — Ruling R9) — add an assertion in the test step that `containerd.v1.types.Status.CREATED.getNumber() == 1` etc.; if the vendored proto differs, update the switch from the generated enum, not from memory.
 
 - [ ] **Step 5: Run and commit**
 
