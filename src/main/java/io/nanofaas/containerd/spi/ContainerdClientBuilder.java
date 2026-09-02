@@ -1,0 +1,49 @@
+package io.nanofaas.containerd.spi;
+
+import io.nanofaas.containerd.internal.DefaultContainerdClient;
+
+import java.util.Objects;
+
+public final class ContainerdClientBuilder implements ContainerdClient.Builder {
+
+    private String socketPath = "/run/containerd/containerd.sock";
+    private String namespace = "nanofaas";
+    private String snapshotter = "overlayfs";
+    private String runtimeName = "io.containerd.runc.v2";
+    private String runtimeBinaryName;
+
+    @Override
+    public ContainerdClient.Builder socketPath(String socketPath) {
+        this.socketPath = Objects.requireNonNull(socketPath, "socketPath");
+        return this;
+    }
+
+    @Override
+    public ContainerdClient.Builder namespace(String namespace) {
+        this.namespace = Objects.requireNonNull(namespace, "namespace");
+        return this;
+    }
+
+    @Override
+    public ContainerdClient.Builder snapshotter(String snapshotter) {
+        this.snapshotter = Objects.requireNonNull(snapshotter, "snapshotter");
+        return this;
+    }
+
+    @Override
+    public ContainerdClient.Builder runtimeName(String runtimeName) {
+        this.runtimeName = Objects.requireNonNull(runtimeName, "runtimeName");
+        return this;
+    }
+
+    @Override
+    public ContainerdClient.Builder runtimeBinaryName(String runtimeBinaryName) {
+        this.runtimeBinaryName = runtimeBinaryName;
+        return this;
+    }
+
+    @Override
+    public ContainerdClient build() {
+        return new DefaultContainerdClient(socketPath, namespace, snapshotter, runtimeName, runtimeBinaryName);
+    }
+}

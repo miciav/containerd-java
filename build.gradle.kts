@@ -35,7 +35,14 @@ dependencies {
     implementation("com.github.jnr:jnr-posix:3.1.20")
     api("org.slf4j:slf4j-api:$slf4jVersion")
 
+    // Epoll native libs: both classifiers coexist on the runtime classpath; Netty's native
+    // loader picks the one matching the host arch (x86_64 CI vs aarch64 dev host).
     runtimeOnly("io.netty:netty-transport-native-epoll:$nettyVersion:linux-x86_64")
+    runtimeOnly("io.netty:netty-transport-native-epoll:$nettyVersion:linux-aarch_64")
+    // io.netty.channel.epoll Java classes (Epoll, EpollDomainSocketChannel, EpollEventLoopGroup)
+    // are not in the classifier jars (those carry only the .so); needed at compile time for
+    // GrpcChannelFactory. Runtime provides them transitively via the native epoll artifacts.
+    compileOnly("io.netty:netty-transport-classes-epoll:$nettyVersion")
 
     testImplementation(platform("org.junit:junit-bom:5.11.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
@@ -54,6 +61,10 @@ val integrationTest = sourceSets.create("integrationTest")
 
 configurations[integrationTest.implementationConfigurationName].extendsFrom(configurations.testImplementation.get())
 configurations[integrationTest.runtimeOnlyConfigurationName].extendsFrom(configurations.testRuntimeOnly.get())
+// main output is not on custom source set classpaths automatically (only the default `test`
+// source set gets that wiring) — without this, integration tests cannot see the library classes
+integrationTest.compileClasspath += files(sourceSets.main.get().output)
+integrationTest.runtimeClasspath += files(sourceSets.main.get().output)
 
 val integrationTestTask = tasks.register<Test>("integrationTest") {
     description = "Runs integration tests against a real containerd on /run/containerd/containerd.sock"
