@@ -1,6 +1,7 @@
 plugins {
     `java-library`
     application
+    id("com.google.protobuf") version "0.9.5"
 }
 
 group = "io.nanofaas"
@@ -27,6 +28,8 @@ dependencies {
     api("io.grpc:grpc-netty:$grpcVersion")
     api("io.grpc:grpc-protobuf:$grpcVersion")
     api("io.grpc:grpc-stub:$grpcVersion")
+    // gRPC codegen emits @javax.annotation.Generated (JSR-250), absent from JDK 9+; compile-time only
+    compileOnly("javax.annotation:javax.annotation-api:1.3.2")
     api("com.google.protobuf:protobuf-java:$protobufVersion")
     implementation("com.google.protobuf:protobuf-java-util:$protobufVersion")
     implementation("com.github.jnr:jnr-posix:3.1.20")
@@ -64,4 +67,25 @@ val integrationTestTask = tasks.register<Test>("integrationTest") {
 
 application {
     mainClass.set("io.nanofaas.containerd.example.Example")
+}
+
+// ---- protobuf / gRPC stub generation ----
+// Vendored protos under src/main/proto mirror the containerd API pinned above by
+// $containerdApiVersion; the Task 2 download step read this same pin from this file.
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:$protobufVersion"
+    }
+    plugins {
+        create("grpc") {
+            artifact = "io.grpc:protoc-gen-grpc-java:$grpcVersion"
+        }
+    }
+    generateProtoTasks {
+        all().forEach { task ->
+            task.plugins {
+                create("grpc") {}
+            }
+        }
+    }
 }
