@@ -48,6 +48,8 @@ dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter")
     testImplementation("org.assertj:assertj-core:3.27.3")
     testImplementation("io.grpc:grpc-inprocess:$grpcVersion")
+    // wiring test starts a real Netty epoll UDS server; epoll classes are compileOnly for main
+    testImplementation("io.netty:netty-transport-classes-epoll:$nettyVersion")
     testRuntimeOnly("org.slf4j:slf4j-simple:$slf4jVersion")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.4")
 }
