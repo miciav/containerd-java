@@ -2,6 +2,8 @@ package io.nanofaas.containerd.internal;
 
 import io.grpc.*;
 
+import java.util.Objects;
+
 /** Injects the containerd namespace header into every outgoing call. */
 public final class NamespaceInterceptor implements ClientInterceptor {
 
@@ -11,7 +13,7 @@ public final class NamespaceInterceptor implements ClientInterceptor {
     private final String namespace;
 
     public NamespaceInterceptor(String namespace) {
-        this.namespace = namespace;
+        this.namespace = Objects.requireNonNull(namespace, "namespace");
     }
 
     @Override
