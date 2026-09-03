@@ -2995,6 +2995,26 @@ public final class ContainersServiceImpl implements Containers {
 
 Wire `containers()` into `ContainerdClient`/`DefaultContainerdClient` (lazy, cached).
 
+**Implementation notes (Task 9 findings, 2026-09-03):**
+
+- **R17 — `remove` is implemented in Task 9, not Task 10.** The code block above left `remove` as
+  a stub, contradicting this step's own header ("remove-for-non-running now") and the Self-Review
+  Notes ("the only intentional stubs are the five `UnsupportedOperationException` methods" —
+  start/stop/kill/wait/exec). `ContainerCreateIT` cleanup also requires it. As implemented:
+  `Tasks.Get` first (running + `!force` → `ContainerdException("…still running, use
+  RemoveOptions.force(true)")`; running + `force` → `stop(id)`, which is a stub until Task 10),
+  then `Containers.Get` (NOT_FOUND → idempotent return), `Containers.Delete`, and
+  `SnapshotManager.remove(snapshotKey)` when `removeSnapshot`. Task 10 replaces the
+  `snapshots.remove` call with `snapshots.forSnapshotter(container.getSnapshotter()).remove(...)`
+  per its plan text.
+- **R18 — `create` must also handle snapshot-`prepare` failure.** The try/catch above wrapped
+  only the `Containers.Create` call; `ContainerCreateIT.duplicateContainerIdThrowsAlreadyExists`
+  exposed that a duplicate id fails earlier, at `snapshots.prepare`, with raw
+  `ALREADY_EXISTS: snapshot "…": already exists` escaping unmapped. As implemented, prepare
+  failure is handled: `ALREADY_EXISTS` + container exists → `ContainerAlreadyExistsException`;
+  `ALREADY_EXISTS` + no container (stale snapshot from an interrupted earlier create) →
+  best-effort remove + one prepare retry; other codes → `StatusExceptionMapper` (SNAPSHOT).
+
 - [ ] **Step 4: Run unit tests, then write `ContainerCreateIT`**
 
 Run: `./gradlew test`
