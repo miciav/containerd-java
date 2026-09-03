@@ -16,6 +16,9 @@ public interface ContainerdClient extends AutoCloseable {
     /** Image operations: pull, get, list, remove. */
     Images images();
 
+    /** Container lifecycle: create, inspect, list, remove, start, stop, kill, wait, exec. */
+    Containers containers();
+
     String namespace();
 
     String snapshotter();
