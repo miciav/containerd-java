@@ -13,6 +13,9 @@ public interface ContainerdClient extends AutoCloseable {
     /** Returns containerd's version and revision (doubles as a health check). */
     Version version();
 
+    /** Image operations: pull, get, list, remove. */
+    Images images();
+
     String namespace();
 
     String snapshotter();

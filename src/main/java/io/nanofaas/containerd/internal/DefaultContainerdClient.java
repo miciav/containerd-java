@@ -3,6 +3,7 @@ package io.nanofaas.containerd.internal;
 import io.grpc.ManagedChannel;
 import io.nanofaas.containerd.Version;
 import io.nanofaas.containerd.spi.ContainerdClient;
+import io.nanofaas.containerd.spi.Images;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -15,6 +16,7 @@ public final class DefaultContainerdClient implements ContainerdClient {
     private final String snapshotter;
     private final String runtimeName;
     private final String runtimeBinaryName;
+    private final Images images;
 
     public DefaultContainerdClient(String socketPath, String namespace, String snapshotter,
                                    String runtimeName, String runtimeBinaryName) {
@@ -28,6 +30,14 @@ public final class DefaultContainerdClient implements ContainerdClient {
                 new NamespaceInterceptor(namespace));
         log.debug("containerd client created (namespace={}, snapshotter={}, runtime={}, binaryName={})",
                 namespace, snapshotter, runtimeName, runtimeBinaryName);
+        // One shared facade per client, cached in a final field (the plan says "lazily", but a
+        // final field rules that out; building it here is free — it only constructs gRPC stubs).
+        this.images = new ImagesServiceImpl(channel, snapshotter);
+    }
+
+    @Override
+    public Images images() {
+        return images;
     }
 
     @Override
