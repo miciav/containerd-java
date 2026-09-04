@@ -19,6 +19,9 @@ public interface ContainerdClient extends AutoCloseable {
     /** Container lifecycle: create, inspect, list, remove, start, stop, kill, wait, exec. */
     Containers containers();
 
+    /** Low-level task operations (NanoFaaS fast path). */
+    Tasks tasks();
+
     String namespace();
 
     String snapshotter();

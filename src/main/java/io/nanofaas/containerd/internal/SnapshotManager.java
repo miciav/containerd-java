@@ -13,12 +13,19 @@ public final class SnapshotManager {
 
     private static final Logger log = LoggerFactory.getLogger(SnapshotManager.class);
 
+    private final ManagedChannel channel;
     private final containerd.services.snapshots.v1.SnapshotsGrpc.SnapshotsBlockingStub stub;
     private final String snapshotter;
 
     public SnapshotManager(ManagedChannel channel, String snapshotter) {
+        this.channel = channel;
         this.stub = containerd.services.snapshots.v1.SnapshotsGrpc.newBlockingStub(channel);
         this.snapshotter = snapshotter;
+    }
+
+    /** Returns a manager bound to an arbitrary snapshotter. */
+    public SnapshotManager forSnapshotter(String other) {
+        return new SnapshotManager(channel, other);
     }
 
     /** Prepares an active snapshot keyed by {@code key}, parented on {@code parent} (may be empty). */

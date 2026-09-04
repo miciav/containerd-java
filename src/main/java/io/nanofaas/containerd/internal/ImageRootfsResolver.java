@@ -30,7 +30,7 @@ public final class ImageRootfsResolver {
         var top = JsonSupport.parse(new String(content.read(image.getTarget().getDigest())));
         String mediaType = field(top, "mediaType");
         if (INDEX_MEDIA_TYPES.contains(mediaType)) {
-            // pick the first platform entry whose platform matches linux/amd64, else the first entry
+            // pick the first platform entry matching the host platform, else the first entry
             String manifestDigest = pickPlatformManifest(top);
             top = JsonSupport.parse(new String(content.read(manifestDigest)));
             mediaType = field(top, "mediaType");
@@ -57,11 +57,12 @@ public final class ImageRootfsResolver {
         if (manifests.isEmpty()) {
             throw new IllegalStateException("image index has no manifests");
         }
+        var host = io.nanofaas.containerd.Platform.host();
         for (var m : manifests) {
             var platform = m.getStructValue().getFieldsOrDefault("platform",
                     com.google.protobuf.Value.getDefaultInstance()).getStructValue();
-            if (platform.getFieldsOrDefault("os", com.google.protobuf.Value.getDefaultInstance()).getStringValue().equals("linux")
-                    && platform.getFieldsOrDefault("architecture", com.google.protobuf.Value.getDefaultInstance()).getStringValue().equals("amd64")) {
+            if (platform.getFieldsOrDefault("os", com.google.protobuf.Value.getDefaultInstance()).getStringValue().equals(host.os())
+                    && platform.getFieldsOrDefault("architecture", com.google.protobuf.Value.getDefaultInstance()).getStringValue().equals(host.architecture())) {
                 return m.getStructValue().getFieldsOrThrow("digest").getStringValue();
             }
         }

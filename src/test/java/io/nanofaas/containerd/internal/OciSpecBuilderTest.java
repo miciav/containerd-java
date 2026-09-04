@@ -115,6 +115,27 @@ class OciSpecBuilderTest {
     }
 
     @Test
+    void printedSpecJsonUsesBareIntegersForNumericFields() {
+        // Regression: containerd unmarshals the spec into Go uint64/int64 fields and rejects
+        // "1024.0" (protobuf Value doubles printed with a decimal point).
+        var any = OciSpecBuilder.buildContainerSpec(ContainerSpec.builder()
+                .id("test-1")
+                .image("alpine")
+                .command(List.of("/bin/sh"))
+                .user("1000:1000")
+                .cpuShares(512)
+                .memoryLimitBytes(128L * 1024 * 1024)
+                .pidsLimit(100)
+                .build());
+        String json = any.getValue().toStringUtf8();
+        assertThat(json).contains("\"hard\":1024", "\"soft\":1024", "\"uid\":1000",
+                "\"gid\":1000", "\"shares\":512", "\"limit\":134217728", "\"limit\":100");
+        // no JSON number token with a fractional part (string contents are quoted, so a digit
+        // right after : , or [ is always a real number)
+        assertThat(json).doesNotMatch("[:,\\[]-?\\d+\\.\\d");
+    }
+
+    @Test
     void execSpecUsesProcessTypeUrlAndJson() {
         var any = OciSpecBuilder.buildExecSpec(List.of("/bin/echo", "hello"), Map.of("A", "B"), "/tmp");
         assertThat(any.getTypeUrl()).isEqualTo(PROCESS_TYPE_URL);

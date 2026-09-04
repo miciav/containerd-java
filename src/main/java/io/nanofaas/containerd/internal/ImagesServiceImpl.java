@@ -25,7 +25,7 @@ public final class ImagesServiceImpl implements Images {
 
     @Override
     public void pull(String reference) {
-        pull(reference, Platform.linuxAmd64());
+        pull(reference, Platform.host());
     }
 
     @Override

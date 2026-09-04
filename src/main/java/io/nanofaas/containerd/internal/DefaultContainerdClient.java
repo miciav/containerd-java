@@ -5,6 +5,7 @@ import io.nanofaas.containerd.Version;
 import io.nanofaas.containerd.spi.Containers;
 import io.nanofaas.containerd.spi.ContainerdClient;
 import io.nanofaas.containerd.spi.Images;
+import io.nanofaas.containerd.spi.Tasks;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -19,6 +20,7 @@ public final class DefaultContainerdClient implements ContainerdClient {
     private final String runtimeBinaryName;
     private final Images images;
     private final Containers containers;
+    private final Tasks tasks;
 
     public DefaultContainerdClient(String socketPath, String namespace, String snapshotter,
                                    String runtimeName, String runtimeBinaryName) {
@@ -36,6 +38,7 @@ public final class DefaultContainerdClient implements ContainerdClient {
         // final field rules that out; building it here is free — it only constructs gRPC stubs).
         this.images = new ImagesServiceImpl(channel, snapshotter);
         this.containers = new ContainersServiceImpl(channel, snapshotter, runtimeName, runtimeBinaryName);
+        this.tasks = new TasksServiceImpl(channel, runtimeBinaryName);
     }
 
     @Override
@@ -46,6 +49,11 @@ public final class DefaultContainerdClient implements ContainerdClient {
     @Override
     public Containers containers() {
         return containers;
+    }
+
+    @Override
+    public Tasks tasks() {
+        return tasks;
     }
 
     @Override

@@ -21,6 +21,7 @@ public final class ContainersServiceImpl implements Containers {
     private final containerd.services.containers.v1.ContainersGrpc.ContainersBlockingStub stub;
     private final SnapshotManager snapshots;
     private final ImageRootfsResolver rootfsResolver;
+    private final TasksServiceImpl tasks;
     private final String snapshotter;
     private final String runtimeName;
 
@@ -29,6 +30,7 @@ public final class ContainersServiceImpl implements Containers {
         this.stub = containerd.services.containers.v1.ContainersGrpc.newBlockingStub(channel);
         this.snapshots = new SnapshotManager(channel, snapshotter);
         this.rootfsResolver = new ImageRootfsResolver(channel);
+        this.tasks = new TasksServiceImpl(channel, runtimeBinaryName);
         this.snapshotter = snapshotter;
         this.runtimeName = runtimeName;
     }
@@ -115,16 +117,26 @@ public final class ContainersServiceImpl implements Containers {
 
     @Override
     public ContainerStatus inspect(String id) {
-        var container = stub.get(containerd.services.containers.v1.GetContainerRequest.newBuilder()
-                .setId(id).build()).getContainer();
-        return new ContainerStatus(
-                container.getId(),
-                container.getImage(),
-                ContainerState.UNKNOWN, // task state filled in by Task 10
-                -1,
-                null,
-                container.getSnapshotKey(),
-                ProtoMapper.map(container).createdAt());
+        containerd.services.containers.v1.Container container;
+        try {
+            container = stub.get(containerd.services.containers.v1.GetContainerRequest.newBuilder()
+                    .setId(id).build()).getContainer();
+        } catch (StatusRuntimeException e) {
+            throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.CONTAINER);
+        }
+        ContainerState state = ContainerState.UNKNOWN;
+        int pid = -1;
+        ExitStatus exitStatus = null;
+        if (tasks.exists(id)) {
+            var task = tasks.inspect(id);
+            state = task.state();
+            pid = task.pid();
+            if (state == ContainerState.STOPPED) {
+                exitStatus = new ExitStatus(task.exitCode(), null);
+            }
+        }
+        return new ContainerStatus(container.getId(), container.getImage(), state, pid,
+                exitStatus, container.getSnapshotKey(), ProtoMapper.map(container).createdAt());
     }
 
     @Override
@@ -137,13 +149,25 @@ public final class ContainersServiceImpl implements Containers {
 
     @Override
     public void remove(String id, RemoveOptions options) {
-        log.debug("container remove: id={} removeSnapshot={} force={}", id, options.removeSnapshot(), options.force());
-        if (hasTask(id)) {
-            if (!options.force()) {
-                throw new ContainerdException("container " + id + " still running, use RemoveOptions.force(true)");
+        log.debug("container remove: id={} removeSnapshot={} force={}",
+                id, options.removeSnapshot(), options.force());
+        if (tasks.exists(id)) {
+            var task = tasks.inspect(id);
+            boolean running = task.state() == ContainerState.RUNNING
+                    || task.state() == ContainerState.CREATED
+                    || task.state() == ContainerState.STARTING
+                    || task.state() == ContainerState.PAUSED;
+            if (running && !options.force()) {
+                throw new ContainerdException(
+                        "container " + id + " is still running; stop it first or use RemoveOptions.force(true)");
             }
-            stop(id); // full stop flow (SIGTERM → wait → SIGKILL → task delete) lands in Task 10
+            if (running) {
+                stop(id);
+            } else {
+                tasks.delete(id);
+            }
         }
+
         containerd.services.containers.v1.Container container;
         try {
             container = stub.get(containerd.services.containers.v1.GetContainerRequest.newBuilder()
@@ -155,46 +179,92 @@ public final class ContainersServiceImpl implements Containers {
             }
             throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.CONTAINER);
         }
+
         stub.delete(containerd.services.containers.v1.DeleteContainerRequest.newBuilder()
                 .setId(id).build());
+
         if (options.removeSnapshot() && !container.getSnapshotKey().isEmpty()) {
-            snapshots.remove(container.getSnapshotKey()); // idempotent
+            snapshots.forSnapshotter(container.getSnapshotter()).remove(container.getSnapshotKey()); // idempotent
         }
         log.debug("container remove complete: id={}", id);
     }
 
-    private boolean hasTask(String containerId) {
+    @Override
+    public int start(String id) {
+        TaskInfo existing = null;
+        if (tasks.exists(id)) {
+            existing = tasks.inspect(id);
+        }
+        if (existing != null && (existing.state() == ContainerState.RUNNING || existing.state() == ContainerState.STARTING)) {
+            throw new ContainerStartException("task for container " + id + " is already running", null);
+        }
+        if (existing != null && existing.state() == ContainerState.STOPPED) {
+            log.debug("task for container {} is stopped; deleting before restart", id);
+            tasks.delete(id);
+        }
         try {
-            containerd.services.tasks.v1.TasksGrpc.newBlockingStub(channel)
-                    .get(containerd.services.tasks.v1.GetRequest.newBuilder()
-                            .setContainerId(containerId).build());
-            return true;
-        } catch (StatusRuntimeException e) {
-            if (e.getStatus().getCode() == io.grpc.Status.Code.NOT_FOUND) {
-                return false;
+            tasks.create(id);
+            return tasks.start(id);
+        } catch (RuntimeException e) {
+            try {
+                if (tasks.exists(id)) {
+                    tasks.delete(id);
+                }
+            } catch (RuntimeException cleanupFailure) {
+                log.warn("failed to clean up task for container {} after start failure", id, cleanupFailure);
             }
-            throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.TASK);
+            if (e instanceof ContainerdException mapped) {
+                // already a typed library exception (e.g. ContainerNotFoundException from a
+                // missing container, ContainerStartException) — do not re-wrap
+                throw mapped;
+            }
+            throw new ContainerStartException("failed to start container " + id + ": " + e.getMessage(), e);
         }
     }
 
     @Override
-    public int start(String id) {
-        throw new UnsupportedOperationException("implemented in Task 10");
-    }
-
-    @Override
     public Optional<ExitStatus> stop(String id) {
-        throw new UnsupportedOperationException("implemented in Task 10");
+        if (!tasks.exists(id)) {
+            log.debug("stop: no task for container {} (idempotent)", id);
+            return Optional.empty();
+        }
+        try {
+            try {
+                tasks.kill(id, Signal.TERM);
+            } catch (TaskNotFoundException e) {
+                return Optional.empty();
+            }
+            try {
+                return Optional.of(tasks.wait(id, STOP_TIMEOUT));
+            } catch (TaskNotFoundException e) {
+                return Optional.empty();
+            } catch (StatusRuntimeException e) {
+                if (e.getStatus().getCode() == io.grpc.Status.Code.DEADLINE_EXCEEDED) {
+                    log.debug("stop: container {} did not exit in time, sending SIGKILL", id);
+                    tasks.kill(id, Signal.KILL);
+                    return Optional.of(tasks.wait(id));
+                }
+                throw e;
+            } finally {
+                try {
+                    tasks.delete(id);
+                } catch (TaskNotFoundException e) {
+                    // already gone
+                }
+            }
+        } catch (RuntimeException e) {
+            throw new ContainerStopException("failed to stop container " + id + ": " + e.getMessage(), e);
+        }
     }
 
     @Override
     public void kill(String id, Signal signal) {
-        throw new UnsupportedOperationException("implemented in Task 10");
+        tasks.kill(id, signal);
     }
 
     @Override
     public ExitStatus wait(String id) {
-        throw new UnsupportedOperationException("implemented in Task 10");
+        return tasks.wait(id);
     }
 
     @Override
