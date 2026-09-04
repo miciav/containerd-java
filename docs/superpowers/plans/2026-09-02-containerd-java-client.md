@@ -4127,6 +4127,26 @@ class ExecIT extends ContainerdConnectionIT {
 Run: `./gradlew integrationTest`
 Expected: PASS.
 
+**Implementation notes (Task 11 findings, 2026-09-04):**
+
+- **R23 — `readFifo` must not use `readAllBytes()`.** The snippet called `in.readAllBytes()`
+  on the stream from `Files.newInputStream(fifo)`. That stream is a `ChannelInputStream`
+  whose `readAllBytes()` overrides the base to `lseek` the backing channel to size the read —
+  and a FIFO (pipe) does not support seeking, so the first real FIFO read throws
+  `java.io.IOException: Illegal seek` (exposed by `IoManagerTest.fifoRoundTrip`). As
+  implemented: `readFifo` drains the FIFO with a plain `read(byte[])` loop into a
+  `ByteArrayOutputStream` (no seek), decoding UTF-8, still reading to EOF.
+- **R24 — Unblock pending readers on failure only, not unconditionally.** The snippet's
+  `finally` called `unblockReaders` on every exec (noting "calling it twice is harmless"). On
+  the *success* path the readers have already hit EOF and closed their read ends, so
+  re-opening a FIFO write end blocks waiting for a reader that will never come — leaking a
+  virtual thread per successful exec (the common NanoFaaS case). As implemented: the `finally`
+  opens a write end for a reader **only if its `Future` is not yet done** (i.e. still blocked in
+  `open(2)`), done synchronously so the pending read-open pairs immediately — success leaves
+  nothing behind, failure still unblocks the stuck readers. `startExec`/`waitExec` also map
+  `StatusRuntimeException` via `StatusExceptionMapper` (the snippet leaked the raw gRPC status);
+  `exec` wraps task-RPC failures in `ExecException`.
+
 - [ ] **Step 5: Commit**
 
 ```bash
