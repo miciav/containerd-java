@@ -7,8 +7,16 @@ import io.nanofaas.containerd.spi.Containers;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public final class ContainersServiceImpl implements Containers {
 
@@ -24,6 +32,8 @@ public final class ContainersServiceImpl implements Containers {
     private final TasksServiceImpl tasks;
     private final String snapshotter;
     private final String runtimeName;
+    private final ExecutorService ioExecutor = Executors.newVirtualThreadPerTaskExecutor();
+    private final IoManager ioManager = new IoManager();
 
     public ContainersServiceImpl(ManagedChannel channel, String snapshotter, String runtimeName, String runtimeBinaryName) {
         this.channel = channel;
@@ -269,11 +279,75 @@ public final class ContainersServiceImpl implements Containers {
 
     @Override
     public ExecResult exec(String id, List<String> command) {
-        throw new UnsupportedOperationException("implemented in Task 11");
+        return exec(id, ExecSpec.builder().command(command).build());
     }
 
     @Override
     public ExecResult exec(String id, ExecSpec spec) {
-        throw new UnsupportedOperationException("implemented in Task 11");
+        if (!tasks.exists(id)) {
+            throw new ExecException("no task for container " + id + "; start the container before exec");
+        }
+        var task = tasks.inspect(id);
+        if (task.state() != ContainerState.RUNNING) {
+            throw new ExecException("task for container " + id + " is not running (state=" + task.state() + ")");
+        }
+
+        String execId = "exec-" + UUID.randomUUID();
+        var fifos = ioManager.createFifoSet(id + "-" + execId);
+        // Open the read ends BEFORE the Exec RPC: open(2) blocks until the shim opens its write
+        // end (which happens as the process spawns), so a process that exits immediately cannot
+        // win the race and leave us with output we never read.
+        var stdoutFuture = ioExecutor.submit(() -> IoManager.readFifo(fifos.stdout()));
+        var stderrFuture = ioExecutor.submit(() -> IoManager.readFifo(fifos.stderr()));
+        try {
+            tasks.exec(id, execId, spec, fifos);
+            int pid = tasks.startExec(id, execId);
+            if (spec.stdin() != null) {
+                ioExecutor.submit(() -> IoManager.writeFifo(fifos.stdin(), spec.stdin().getBytes(StandardCharsets.UTF_8)));
+            }
+            String stdout = stdoutFuture.get();
+            String stderr = stderrFuture.get();
+            ExitStatus status = tasks.waitExec(id, execId);
+            log.debug("exec complete: containerId={} execId={} pid={} exitCode={}", id, execId, pid, status.code());
+            return new ExecResult(status.code(), stdout, stderr);
+        } catch (ContainerdException e) {
+            throw new ExecException("exec failed for container " + id + ": " + e.getMessage(), e);
+        } catch (ExecutionException e) {
+            throw new ExecException("exec IO failed for container " + id, e.getCause());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ExecException("exec interrupted for container " + id, e);
+        } finally {
+            // If a reader never reached EOF (exec/start failed before the shim opened the FIFO
+            // write ends), it is still blocked in open(2): pair it with a write end so it
+            // completes. A reader that already hit EOF is left alone — opening a write end with
+            // no reader to pair with would block.
+            if (!stdoutFuture.isDone()) {
+                unblockReader(fifos.stdout());
+            }
+            if (!stderrFuture.isDone()) {
+                unblockReader(fifos.stderr());
+            }
+            try {
+                tasks.deleteExec(id, execId);
+            } catch (RuntimeException e) {
+                log.warn("failed to delete exec process {} for container {}", execId, id, e);
+            }
+            ioManager.cleanup(fifos);
+        }
+    }
+
+    /** Opens and immediately closes a FIFO's write end so a reader blocked in open(2) proceeds to EOF. */
+    private void unblockReader(Path fifo) {
+        try (var out = Files.newOutputStream(fifo)) {
+            // open-write-close: the paired reader now sees EOF and returns.
+        } catch (IOException ignored) {
+            // best effort — cleanup() removes the FIFO right after
+        }
+    }
+
+    /** Shuts down the IO virtual-thread pool. Called by the owning {@code ContainerdClient}. */
+    public void close() {
+        ioExecutor.shutdown();
     }
 }

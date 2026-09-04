@@ -19,7 +19,8 @@ public final class DefaultContainerdClient implements ContainerdClient {
     private final String runtimeName;
     private final String runtimeBinaryName;
     private final Images images;
-    private final Containers containers;
+    // Concrete type (not the Containers SPI) so close() can shut down its IO virtual-thread pool.
+    private final ContainersServiceImpl containers;
     private final Tasks tasks;
 
     public DefaultContainerdClient(String socketPath, String namespace, String snapshotter,
@@ -89,6 +90,7 @@ public final class DefaultContainerdClient implements ContainerdClient {
     @Override
     public void close() {
         log.debug("closing containerd client");
+        containers.close();
         channel.shutdownNow();
     }
 }

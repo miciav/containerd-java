@@ -149,4 +149,56 @@ public final class TasksServiceImpl implements Tasks {
             throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.TASK);
         }
     }
+
+    /** Creates an exec process (OCI process spec + IO FIFO paths) inside a running task. */
+    public void exec(String containerId, String execId, ExecSpec spec, IoManager.FifoSet fifos) {
+        var request = containerd.services.tasks.v1.ExecProcessRequest.newBuilder()
+                .setContainerId(containerId)
+                .setExecId(execId)
+                .setStdin(fifos.stdin().toString())
+                .setStdout(fifos.stdout().toString())
+                .setStderr(fifos.stderr().toString())
+                .setSpec(OciSpecBuilder.buildExecSpec(spec.command(), spec.environment(), spec.workingDir()))
+                .build();
+        log.debug("exec create: containerId={} execId={}", containerId, execId);
+        try {
+            stub.exec(request);
+        } catch (StatusRuntimeException e) {
+            throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.TASK);
+        }
+    }
+
+    /** Starts an exec process; returns its pid. */
+    public int startExec(String containerId, String execId) {
+        try {
+            return stub.start(containerd.services.tasks.v1.StartRequest.newBuilder()
+                    .setContainerId(containerId).setExecId(execId).build()).getPid();
+        } catch (StatusRuntimeException e) {
+            throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.TASK);
+        }
+    }
+
+    /** Blocks until an exec process exits; returns its exit status. */
+    public ExitStatus waitExec(String containerId, String execId) {
+        try {
+            var response = stub.wait(containerd.services.tasks.v1.WaitRequest.newBuilder()
+                    .setContainerId(containerId).setExecId(execId).build());
+            return new ExitStatus(response.getExitStatus(),
+                    response.hasExitedAt() ? Instant.ofEpochSecond(response.getExitedAt().getSeconds()) : null);
+        } catch (StatusRuntimeException e) {
+            throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.TASK);
+        }
+    }
+
+    /** Deletes an exec process. Idempotent — a missing exec (NOT_FOUND) is ignored. */
+    public void deleteExec(String containerId, String execId) {
+        try {
+            stub.deleteProcess(containerd.services.tasks.v1.DeleteProcessRequest.newBuilder()
+                    .setContainerId(containerId).setExecId(execId).build());
+        } catch (StatusRuntimeException e) {
+            if (e.getStatus().getCode() != io.grpc.Status.Code.NOT_FOUND) {
+                throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.TASK);
+            }
+        }
+    }
 }
