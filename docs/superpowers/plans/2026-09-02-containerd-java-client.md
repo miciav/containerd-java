@@ -49,7 +49,7 @@ These were verified against the actual v2.2.1 sources — **do not "correct" the
 - SLF4J only; no concrete logging backend in `api` scope (`slf4j-simple` is test/example scope only). No INFO per operation; DEBUG for lifecycle decisions (prepare/remove/mount/create/delete), TRACE for RPC payloads, WARN for best-effort cleanup failures.
 - `ContainerdClient` implements `AutoCloseable`; one shared `ManagedChannel` per client; blocking stubs are thread-safe and shared; no thread per container — FIFO reads and event dispatch run on Java 21 virtual threads.
 - Namespace default `nanofaas`, propagated centrally via `NamespaceInterceptor` on every call.
-- Snapshotter default `overlayfs`, runtime default `io.containerd.runc.v2`, platform default `linux/amd64` — all configurable on the builder.
+- Snapshotter default `overlayfs`, runtime default `io.containerd.runc.v2`, platform default = host platform (`Platform.host()`; corrected in Task 10 — R21) — all configurable on the builder.
 - Documented idempotency: `stop`, `remove`, snapshot cleanup tolerate `NOT_FOUND`. `start` on an already-running task throws `ContainerStartException`.
 - Cleanup guarantees (documented in Javadoc + README): create-failure → best-effort snapshot remove; start-failure → best-effort task delete; exec failure → FIFO dir always deleted, exec process always `DeleteProcess`-ed; remove → task delete (if `force`) → container delete → snapshot remove.
 - Tests: every unit test is plain JUnit 5 (no Spring); integration tests `@Tag("integration")` in `src/integrationTest`, skip (Assumptions) when the socket is absent/unreadable, unique IDs (`it-` + UUID), full cleanup in `@AfterEach`.
@@ -3747,6 +3747,33 @@ sudo ctr -n nanofaas-it snapshots list 2>/dev/null | grep -E "it-(life|already|r
 ```
 
 Expected: `no leaked snapshots`.
+
+**Implementation notes (Task 10 findings, 2026-09-04):**
+
+- **R19 — `start` must not re-wrap already-mapped exceptions.** The guard above only
+  re-threw `ContainerStartException`, so `start` on an unknown container surfaced
+  `ContainerStartException(… NOT_FOUND)` instead of `ContainerNotFoundException`
+  (`startUnknownContainerThrowsNotFound` exposed it). As implemented: after best-effort task
+  cleanup, any `ContainerdException` is re-thrown as-is; everything else is wrapped in
+  `ContainerStartException`.
+- **R20 — `inspect` maps `Containers.Get` failures.** The body above left the raw
+  `StatusRuntimeException` on NOT_FOUND; `fullLifecycleCreateStartInspectStopRemove`
+  requires `ContainerNotFoundException`. Mapped via `StatusExceptionMapper` (CONTAINER).
+- **R21 — Default platform is the HOST platform, not hardcoded `linux/amd64`** (supersedes
+  the Global Constraint "platform default linux/amd64"). This machine is aarch64; the amd64
+  default pulled an x86-64 rootfs and every task died at start with
+  `exec /bin/sh: exec format error` (task STOPPED, exit 255) — found by attaching a stderr
+  file to a scratch task. As implemented: `Platform.host()` (JVM `os.name`/`os.arch`
+  normalized to OCI values, `Platform.fromOsArch` is unit-tested); `Images.pull(reference)`
+  defaults to `Platform.host()`; `ImageRootfsResolver.pickPlatformManifest` matches the host
+  platform. Callers can still pin any platform explicitly.
+- **R22 — OCI spec JSON must print bare integers.** `Value.number_value` is a double and
+  `JsonFormat` renders it as `1024.0`; containerd's Go-side validation then fails with
+  `failed to validate OCI runtime features: unmarshal spec: json: cannot unmarshal number
+  1024.0 into Go struct field POSIXRlimit.process.rlimits.hard of type uint64`
+  (CreateTask → UNKNOWN). `JsonSupport.print` now serializes integral doubles as bare
+  integers (safe: the OCI spec has no fractional fields); regression test
+  `OciSpecBuilderTest.printedSpecJsonUsesBareIntegersForNumericFields`.
 
 - [ ] **Step 5: Commit**
 
