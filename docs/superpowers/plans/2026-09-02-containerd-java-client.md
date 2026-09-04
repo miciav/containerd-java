@@ -4637,6 +4637,19 @@ Expected output: version lines, pull progress absent but success, `exec stdout=h
 
 - [ ] **Step 3: Write `README.md`** — must cover: purpose; requirements (Linux, containerd 2.x — tested against v2.2.1, Java 21+, crun or runc via `io.containerd.runc.v2`); architecture (layers + the verified-facts table distilled); installation (`./gradlew build`, mavenLocal coordinates); basic usage (the spec's example + exec + events); containerd configuration (socket path, runtime alias for crun: `[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.crun] runtime_type = "io.containerd.runc.v2"` with `binary_name` or `ContainerdClient.builder().runtimeBinaryName("crun")`); crun configuration assumptions; namespace configuration (default `nanofaas`, header propagation); snapshotter configuration (default `overlayfs`); limitations (Linux-only, no checkpoint/restore, no stats/update-task resources yet, no registry auth customization — anonymous pulls only, exec requires a running task, no TTY/PTY support yet); integration test instructions (`sudo ./gradlew integrationTest` — socket is root-owned; `-Dio.nanofaas.containerd.socket=` override); and the conceptual glossary: **image** (manifest + config + content blobs), **content** (blobs by digest), **snapshot** (filesystem layer state, ACTIVE/COMMITTED, chainID-addressable), **container** (metadata: spec + snapshotter + snapshot key), **task** (the running instance), **process** (task or exec member with pid and exit status) — with the explicit warning that Docker semantics don't apply.
 
+**Implementation notes (Task 13 findings, 2026-09-04):**
+
+- **R27 — `slf4j-simple` for the example is not `runtimeOnly` on the library.** The plan's
+  Files list said "add `runtimeOnly("org.slf4j:slf4j-simple:2.0.17")`", but `build.gradle.kts`
+  is a `java-library`: a `runtimeOnly` dependency is part of the library's published runtime
+  classpath, so every consumer would get a second SLF4J binding pulled in transitively — directly
+  contradicting the spec's own constraint ("`slf4j-simple` is test/example scope only" / "No
+  concrete logging backend in `api` scope"). As implemented: a dedicated `exampleLogging`
+  configuration is added to the `run` task's classpath only (`tasks.named<JavaExec>("run")
+  { classpath += exampleLogging }`); nothing changes on the published `api`/`implementation`/
+  `runtimeOnly` classpaths. `./gradlew run` still prints logs (verified against real containerd);
+  a consumer depending on the library gets none.
+
 - [ ] **Step 4: Final verification**
 
 Run: `./gradlew clean build` then `sudo ./gradlew integrationTest`
