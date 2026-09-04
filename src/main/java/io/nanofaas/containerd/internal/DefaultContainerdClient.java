@@ -4,6 +4,7 @@ import io.grpc.ManagedChannel;
 import io.nanofaas.containerd.Version;
 import io.nanofaas.containerd.spi.Containers;
 import io.nanofaas.containerd.spi.ContainerdClient;
+import io.nanofaas.containerd.spi.Events;
 import io.nanofaas.containerd.spi.Images;
 import io.nanofaas.containerd.spi.Tasks;
 import org.slf4j.Logger;
@@ -22,6 +23,7 @@ public final class DefaultContainerdClient implements ContainerdClient {
     // Concrete type (not the Containers SPI) so close() can shut down its IO virtual-thread pool.
     private final ContainersServiceImpl containers;
     private final Tasks tasks;
+    private final Events events;
 
     public DefaultContainerdClient(String socketPath, String namespace, String snapshotter,
                                    String runtimeName, String runtimeBinaryName) {
@@ -40,6 +42,7 @@ public final class DefaultContainerdClient implements ContainerdClient {
         this.images = new ImagesServiceImpl(channel, snapshotter);
         this.containers = new ContainersServiceImpl(channel, snapshotter, runtimeName, runtimeBinaryName);
         this.tasks = new TasksServiceImpl(channel, runtimeBinaryName);
+        this.events = new EventsServiceImpl(channel, namespace);
     }
 
     @Override
@@ -55,6 +58,11 @@ public final class DefaultContainerdClient implements ContainerdClient {
     @Override
     public Tasks tasks() {
         return tasks;
+    }
+
+    @Override
+    public Events events() {
+        return events;
     }
 
     @Override

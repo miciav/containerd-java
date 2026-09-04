@@ -22,6 +22,9 @@ public interface ContainerdClient extends AutoCloseable {
     /** Low-level task operations (NanoFaaS fast path). */
     Tasks tasks();
 
+    /** containerd event stream (subscribe with filtering). */
+    Events events();
+
     String namespace();
 
     String snapshotter();
