@@ -4539,6 +4539,21 @@ class EventsIT extends ContainerdConnectionIT {
 Run: `./gradlew integrationTest`
 Expected: PASS.
 
+**Implementation notes (Task 12 findings, 2026-09-04):**
+
+- **R25 — Only the namespace filter is sent server-side; topics are filtered client-side.** The
+  filter `EventFilter` built above (`topic~="/<topic>"` + `namespace=="<ns>"`) does not work on this
+  containerd (v2.2.1): its fieldpath parser treats `/` as a quote token (an *unquoted* topic value
+  → `parse error: ... invalid quote encountered`), and any *multi-filter* combination is rejected
+  and the server silently falls back to an **unfiltered** stream (verified by a raw-stub probe:
+  single `namespace==<ns>` and single `topic~="/<t>"` each work; any pair of filters → unfiltered).
+  As implemented: `EventFilter.toFieldpathFilters(ns)` returns just `namespace==<ns>` (the filter
+  the `Events` RPC documents), and `EventsServiceImpl` selects topics **client-side** in `onNext`
+  (an empty topic list matches all topics). `EventsIT.receivesTaskStartEvent` passes.
+- **R26 — Reconnect uses real exponential backoff.** The snippet's `scheduleReconnect` retried at a
+  fixed 1s despite the `Events` Javadoc promising "exponential backoff (up to 30s)". As implemented:
+  `1s → 2s → 4s …` capped at `30s`, reset to `1s` whenever an event is received (a healthy stream).
+
 - [ ] **Step 5: Commit**
 
 ```bash
