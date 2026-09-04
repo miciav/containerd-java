@@ -1,0 +1,296 @@
+# containerd-java
+
+A Java client library that talks **directly to containerd's native gRPC API** over a Unix
+Domain Socket — no `ctr`, no `nerdctl`, no Docker, no Kubernetes CRI, no sidecar daemon. Built
+for [NanoFaaS](https://github.com/), a lightweight Function-as-a-Service runtime, but usable
+anywhere a JVM process needs to drive containerd directly.
+
+```java
+try (ContainerdClient client = ContainerdClient.builder()
+        .socketPath("/run/containerd/containerd.sock")
+        .namespace("nanofaas")
+        .build()) {
+
+    client.images().pull("docker.io/library/alpine:latest");
+
+    Container container = client.containers().create(
+        ContainerSpec.builder()
+            .id("test-1")
+            .image("docker.io/library/alpine:latest")
+            .command(List.of("/bin/sh", "-c", "while true; do sleep 10; done"))
+            .build());
+
+    client.containers().start(container.id());
+    ContainerStatus status = client.containers().inspect(container.id());
+    client.containers().stop(container.id());
+    client.containers().remove(container.id(),
+        RemoveOptions.builder().removeSnapshot(true).build());
+}
+```
+
+## Requirements
+
+- Linux (the UDS transport is Netty epoll; no other OS is supported)
+- containerd 2.x — developed and tested against **v2.2.1** on both `linux/amd64` and
+  `linux/arm64`
+- Java 21+ (Gradle toolchain auto-provisions 21 if only a newer JDK is installed)
+- `crun` or `runc` as the OCI runtime, launched by containerd's `io.containerd.runc.v2` shim
+- Gradle (wrapper included, no local Gradle install needed)
+
+## Architecture
+
+```
+ContainerdClient  (public entry point, AutoCloseable, one shared gRPC channel)
+   │
+   ├── Images       pull / get / list / remove          (io.nanofaas.containerd.spi)
+   ├── Containers   create / inspect / list / remove /
+   │                start / stop / kill / wait / exec
+   ├── Tasks        low-level task ops (NanoFaaS fast path)
+   └── Events       subscribe(filter, handler) → Subscription
+   │
+   ▼ (internal — never exposed in public signatures)
+   GrpcChannelFactory     Netty-epoll channel over the UDS
+   NamespaceInterceptor   stamps every call with the `containerd-namespace` header
+   ProtoMapper            proto ⇄ public record conversions
+   OciSpecBuilder         builds the OCI runtime spec as JSON (see below)
+   SnapshotManager        prepare / mounts / remove, per snapshotter
+   ImageRootfsResolver    manifest → config → diff_ids → ChainID
+   IoManager              FIFO create/read/write for exec IO, on virtual threads
+   TransferImagePuller    drives the Transfer service for pulls
+   EventMapper            envelope → typed Event/TaskEvent
+```
+
+Generated protobuf/gRPC classes (`containerd.services.*`, `containerd.types.*`) are vendored
+from the containerd v2.2.1 source tree under `src/main/proto` and never appear in a public
+method signature — only `io.nanofaas.containerd` and `io.nanofaas.containerd.spi` types do.
+
+containerd's own object model is preserved rather than flattened into Docker semantics: a
+`Container` is metadata (spec, snapshot key, image); a running instance is a separate `Task`;
+an `exec` inside a task is a `Process`. See [Conceptual glossary](#conceptual-glossary).
+
+## Installation
+
+```bash
+./gradlew build          # compiles, runs unit tests, produces build/libs/containerd-java-0.1.0-SNAPSHOT.jar
+./gradlew publishToMavenLocal   # if you add the maven-publish plugin for local consumption
+```
+
+Gradle coordinates (once published): `io.nanofaas:containerd-java:0.1.0-SNAPSHOT`.
+
+## Basic usage
+
+### Connect, pull, create, start, inspect, stop, remove
+
+See the example at the top of this file, or run it directly:
+
+```bash
+./gradlew run   # runs src/main/java/io/nanofaas/containerd/example/Example.java
+```
+
+### Exec — capture stdout/stderr/exit code
+
+```java
+ExecResult result = client.containers().exec(id,
+        List.of("/bin/sh", "-c", "echo hello; echo error >&2; exit 3"));
+result.exitCode();  // 3
+result.stdout();    // "hello\n"
+result.stderr();    // "error\n"
+```
+
+Requires the container's task to already be `RUNNING`; internally, IO travels over FIFOs
+(`jnr-posix` `mkfifo`, no shell) read on JDK 21 virtual threads.
+
+### Events
+
+```java
+Subscription sub = client.events().subscribe(
+        EventFilter.topics("/tasks/start", "/tasks/exit"),
+        event -> System.out.println(event.topic() + " " + event.taskEvent()));
+// ... later
+sub.close();
+```
+
+The handler runs on a virtual thread per event, so a slow consumer never blocks stream
+delivery. A dropped stream auto-reconnects with exponential backoff (1s, doubling, capped at
+30s), until `close()` is called.
+
+## containerd configuration
+
+- Default socket: `/run/containerd/containerd.sock` (configurable via
+  `ContainerdClientBuilder.socketPath(...)`). The socket is typically root-owned; either run
+  the JVM as root, or add the running user to the group that owns the socket
+  (`containerd.toml`'s `grpc.gid`).
+- Default runtime id: `io.containerd.runc.v2` (the standard v2 shim). Configurable via
+  `.runtimeName(...)`.
+- To run under **crun** instead of `runc`, either:
+  - set `.runtimeBinaryName("crun")` on the client builder — this library passes it as the
+    runc-v2 shim's `binary_name` option (`containerd.runc.v1.Options`, proto-encoded `Any` on
+    `CreateTaskRequest.options`); or
+  - alias a runtime in containerd's `config.toml`:
+    ```toml
+    [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.crun]
+      runtime_type = "io.containerd.runc.v2"
+      [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.crun.options]
+        BinaryName = "crun"
+    ```
+    and set `.runtimeName("crun")`.
+
+## crun configuration assumptions
+
+The library never invokes `crun` or `runc` directly — it only ever talks to containerd, which
+launches the OCI runtime itself via the shim. It assumes the shim binary
+(`containerd-shim-runc-v2`) is on containerd's `PATH` and that the configured runtime binary
+(`runc` by default, or `crun` via `runtimeBinaryName`) is resolvable by that shim.
+
+## Namespace configuration
+
+Every gRPC call carries the `containerd-namespace` metadata header, injected centrally by
+`NamespaceInterceptor` at the channel level (so `version()` and every facade share it — no call
+site can forget it). Default namespace: `nanofaas`. containerd auto-creates namespaces on first
+use; there is no explicit "create namespace" step.
+
+```java
+ContainerdClient.builder().namespace("my-namespace").build();
+```
+
+## Snapshotter configuration
+
+Default snapshotter: `overlayfs`. Configurable via `.snapshotter(...)`. Each container gets an
+**active** snapshot keyed by its container id, parented on the image's top ChainID
+(`opencontainers/image-spec` ChainID algorithm, computed client-side from the image's
+`rootfs.diff_ids`). A `containerd.io/gc.ref.snapshot.<snapshotter>` label is set on the
+container so containerd's garbage collector never reclaims a snapshot that's still in use.
+Snapshot removal is explicit (`RemoveOptions.removeSnapshot(true)`) and idempotent.
+
+## Limitations
+
+- **Linux only** — the UDS transport requires Netty's epoll native library.
+- **Anonymous registry pulls only** — no registry authentication/credentials customization yet
+  (the Transfer API's `OCIRegistry.resolver` supports auth, but this library doesn't expose it).
+- **No checkpoint/restore.**
+- **No `Tasks.Update`** (live resource-limit changes on a running task).
+- **No TTY/PTY support** — `exec`/task IO is FIFO-only, `terminal` is always `false`.
+- `exec` requires the container's task to already be `RUNNING`.
+- Event topic filtering is applied **client-side**: this containerd's server-side fieldpath
+  filter rejects multi-clause combinations (see Design Notes, R25) and falls back to an
+  unfiltered stream, so only the namespace scoping filter is sent to the server and topics are
+  matched in the client.
+
+## Integration tests
+
+Integration tests are tagged `@Tag("integration")`, live under `src/integrationTest`, run
+against a **real** containerd (they pull `docker.io/library/alpine:latest`, so networking and
+registry access are required), and are **not** part of `./gradlew build`/`check`:
+
+```bash
+sudo ./gradlew integrationTest
+# or, if your user has socket access (e.g. member of containerd's socket group):
+./gradlew integrationTest
+# to point at a non-default socket:
+./gradlew integrationTest -Dio.nanofaas.containerd.socket=/custom/path/containerd.sock
+```
+
+Each integration test class extends `ContainerdConnectionIT`, whose `@BeforeAll` uses JUnit
+`Assumptions` to **skip** (not fail) when the socket is missing or unreadable. Every test uses a
+unique id (`it-<name>-` + UUID) and cleans up its own containers/snapshots in `finally`/`@AfterEach`.
+
+## Conceptual glossary
+
+containerd's object model does not map one-to-one onto Docker's. Understanding these five
+concepts is the fastest way to reason about this library correctly:
+
+- **Image** — a manifest (+ optional index for multi-platform images) plus a config blob,
+  referencing layer blobs by digest. Pulling an image populates the content store and creates
+  an `Image` record; it does **not** by itself create any running state.
+- **Content** — the blob store, addressed by digest (`sha256:...`). Manifests, configs, and
+  layers all live here, read via the `Content` service.
+- **Snapshot** — filesystem state for a container's root filesystem, managed by a
+  *snapshotter* (default `overlayfs`). A snapshot is `ACTIVE` (mutable, in use by a container)
+  or `COMMITTED` (immutable, e.g. an image layer); active snapshots are addressed by a key and
+  parented on a `ChainID` computed from the image's layer diff IDs.
+- **Container** — metadata only: an id, an OCI runtime spec, a snapshotter + snapshot key, an
+  image reference, labels. Creating a container does **not** start anything.
+- **Task** — the running instance of a container: an OS process tree launched from the
+  container's spec and snapshot mounts by the OCI runtime. Starting/stopping/killing operates
+  on the task, not the container.
+- **Process** — the task's init process, or an `exec`'d process inside it (tracked by an
+  `exec_id`); both have a pid and, once exited, an exit status.
+
+---
+
+## Design Notes
+
+1. **Architecture implemented:** layered client (`ContainerdClient` → `Images`/`Containers`/
+   `Tasks`/`Events` facades → generated gRPC stubs) over a single shared Netty-epoll channel on
+   the UDS; internal `GrpcChannelFactory`, `NamespaceInterceptor`, `ProtoMapper`,
+   `OciSpecBuilder`, `SnapshotManager`, `IoManager`, `TransferImagePuller`,
+   `ImageRootfsResolver`, `EventMapper`.
+2. **containerd APIs used:** `version.v1.Version` (health), `containers.v1.Containers`
+   (create/get/list/delete), `tasks.v1.Tasks` (create/start/kill/wait/delete/exec/delete-process),
+   `snapshots.v1.Snapshots` (prepare/mounts/remove), `images.v1.Images` (get/list/delete),
+   `transfer.v1.Transfer` (pull), `content.v1.Content` (read manifest/config),
+   `events.v1.Events` (subscribe). There is no `PullImage` RPC — pull is implemented as
+   `Transfer` with an `OCIRegistry` source and an `ImageStore` destination, exactly what
+   `ctr images pull` does.
+3. **Lifecycle create/start/stop/delete:** create = resolve image ChainID (manifest → config →
+   `diff_ids` → ChainID) → `Snapshots.Prepare(key=id, parent=chainID)` → spec `Any` (JSON, type
+   URL `types.containerd.io/opencontainers/runtime-spec/1/Spec`) → `Containers.Create` (+ GC
+   label); on failure, best-effort snapshot remove. start = `Tasks.Create(rootfs=snapshot
+   mounts)` → `Tasks.Start`. stop = SIGTERM → wait(10s) → SIGKILL → wait → task delete
+   (idempotent). remove = task delete (if `force`) → `Containers.Delete` → snapshot remove
+   (idempotent).
+4. **Image pull strategy:** the containerd Transfer service, `OCIRegistry` source +
+   `ImageStore` destination (platform-scoped, `unpacks` into the configured snapshotter,
+   `all_metadata=true`) — no CLI shelled out, no separate pull-then-unpack step to coordinate.
+5. **Snapshot strategy:** snapshotter configurable (default `overlayfs`); containers get an
+   active snapshot keyed by container id, parented on the image's top ChainID;
+   `containerd.io/gc.ref.snapshot.<snapshotter>` label protects it from GC; removal is explicit
+   and idempotent.
+6. **OCI spec strategy:** JSON spec (field names from `opencontainers/runtime-spec`) carried in
+   a `google.protobuf.Any` with containerd's registered type URL, built by a dedicated
+   `OciSpecBuilder` — no hand-rolled opaque byte payloads. Resource limits (CPU shares/quota/
+   period, memory limit/swap, pids) live under `linux.resources`.
+7. **Concurrency model:** one shared `ManagedChannel` + thread-safe blocking stubs per client;
+   no thread per container. FIFO IO for exec (`IoManager`) and event handler dispatch
+   (`EventsServiceImpl`) both run on Java 21 virtual threads; event streams auto-reconnect with
+   exponential backoff.
+8. **Known limitations:** Linux-only; anonymous registry pulls (no auth customization yet); no
+   checkpoint/restore, TTY, or `Tasks.Update`; `exec` requires a running task; event topic
+   filtering is client-side (see R25 below).
+9. **containerd-version-specific assumptions:** API pinned to v2.2.1 (protos vendored under
+   `src/main/proto`, upgrade = replace files + bump the `containerdApiVersion` property in
+   `build.gradle.kts`); runtime-spec 1.x type URLs; `io.containerd.runc.v2` shim; spec travels
+   as JSON (not proto) inside the `Any` — verified against the containerd Go source, not
+   assumed from memory; `ociVersion` emitted as `1.2.0`; default platform is the **host**
+   platform (not hardcoded `linux/amd64` — this was corrected in Task 10, see R21: an x86_64
+   default silently pulled the wrong rootfs on this aarch64 development machine and every task
+   died with `exec format error`).
+10. **NanoFaaS optimizations possible next:** pre-pull images once and prepare snapshots ahead
+    of time (`Snapshots.Prepare` is cheap metadata work; task create just reuses the active
+    snapshot's mounts via `SnapshotManager.mounts`); pre-create containers (metadata + spec) and
+    only create/start tasks per invocation; reuse a warmed exec path; cache resolved ChainIDs to
+    skip `Images.Get` on the hot path; use `View` (read-only) snapshots for function rootfs that
+    never needs to be written to.
+
+### Notable implementation findings (post-plan corrections)
+
+The implementation plan (`docs/superpowers/plans/2026-09-02-containerd-java-client.md`) records
+every place the verified containerd behavior diverged from the plan's initial code sketch, as
+`R1`–`R26` notes per task. The ones most likely to surprise a new contributor:
+
+- **R21 (Task 10):** the default `Platform` is the **host** platform, not a hardcoded
+  `linux/amd64` — pulling an amd64 image on an arm64 host (or vice versa) silently produces a
+  container whose init process fails with `exec format error`.
+- **R22 (Task 10):** the OCI spec JSON must serialize integral fields as bare integers, not
+  `1024.0` — `protobuf-java-util`'s `Struct`/`Value` model has no integer type, so
+  `JsonSupport.print` post-processes integral doubles.
+- **R23/R24 (Task 11):** reading a FIFO cannot use `InputStream.readAllBytes()` (it seeks to
+  size the read; pipes don't support seeking), and unblocking a pending exec-IO reader must only
+  happen for readers still stuck in `open(2)` — unblocking a reader that already hit EOF blocks
+  forever waiting for a reader that will never arrive.
+- **R25 (Task 12):** this containerd's event fieldpath filter parser rejects multi-clause
+  filters and any unquoted value containing `/`, silently falling back to an unfiltered stream
+  rather than erroring — confirmed with a raw-stub probe of eight filter variants before
+  settling on server-side namespace scoping + client-side topic matching.
+
+See the plan file for the full list and the verification each finding is based on.

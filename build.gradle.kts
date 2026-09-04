@@ -82,6 +82,18 @@ application {
     mainClass.set("io.nanofaas.containerd.example.Example")
 }
 
+// The runnable example gets an SLF4J backend on the `run` classpath only. Using `runtimeOnly`
+// (as the plan suggested) would publish slf4j-simple to every consumer of this library, which
+// the spec forbids ("slf4j-simple is test/example scope only") and which would collide with a
+// consumer's own SLF4J binding. A dedicated configuration keeps it off the published classpath.
+val exampleLogging = configurations.create("exampleLogging")
+dependencies {
+    exampleLogging("org.slf4j:slf4j-simple:$slf4jVersion")
+}
+tasks.named<JavaExec>("run") {
+    classpath += exampleLogging
+}
+
 // ---- protobuf / gRPC stub generation ----
 // Vendored protos under src/main/proto mirror the containerd API pinned above by
 // $containerdApiVersion; the Task 2 download step read this same pin from this file.
