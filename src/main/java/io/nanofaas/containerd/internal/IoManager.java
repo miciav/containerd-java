@@ -25,10 +25,10 @@ public final class IoManager {
     public record FifoSet(Path dir, Path stdin, Path stdout, Path stderr) {
     }
 
-    public IoManager() {
+    private IoManager() {
     }
 
-    public FifoSet createFifoSet(String prefix) {
+    public static FifoSet createFifoSet(String prefix) {
         Path dir = Path.of(System.getProperty("java.io.tmpdir"), "containerd-java-fifos",
                 prefix + "-" + UUID.randomUUID());
         Path stdin = dir.resolve("stdin");
@@ -73,7 +73,7 @@ public final class IoManager {
         }
     }
 
-    public void cleanup(FifoSet fifos) {
+    public static void cleanup(FifoSet fifos) {
         cleanupQuietly(fifos.dir());
     }
 

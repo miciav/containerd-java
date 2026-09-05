@@ -97,8 +97,7 @@ public final class TasksServiceImpl implements Tasks {
                     : stub.withDeadlineAfter(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
             var response = blockingStub.wait(containerd.services.tasks.v1.WaitRequest.newBuilder()
                     .setContainerId(containerId).build());
-            return new ExitStatus(response.getExitStatus(),
-                    response.hasExitedAt() ? Instant.ofEpochSecond(response.getExitedAt().getSeconds()) : null);
+            return toExitStatus(response.getExitStatus(), response.hasExitedAt(), response.getExitedAt());
         } catch (StatusRuntimeException e) {
             if (e.getStatus().getCode() == io.grpc.Status.Code.DEADLINE_EXCEEDED) {
                 throw e; // deliberately unmapped: callers detect the timeout by code
@@ -112,8 +111,7 @@ public final class TasksServiceImpl implements Tasks {
         try {
             var response = stub.delete(containerd.services.tasks.v1.DeleteTaskRequest.newBuilder()
                     .setContainerId(containerId).build());
-            return new ExitStatus(response.getExitStatus(),
-                    response.hasExitedAt() ? Instant.ofEpochSecond(response.getExitedAt().getSeconds()) : null);
+            return toExitStatus(response.getExitStatus(), response.hasExitedAt(), response.getExitedAt());
         } catch (StatusRuntimeException e) {
             throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.TASK);
         }
@@ -183,8 +181,7 @@ public final class TasksServiceImpl implements Tasks {
         try {
             var response = stub.wait(containerd.services.tasks.v1.WaitRequest.newBuilder()
                     .setContainerId(containerId).setExecId(execId).build());
-            return new ExitStatus(response.getExitStatus(),
-                    response.hasExitedAt() ? Instant.ofEpochSecond(response.getExitedAt().getSeconds()) : null);
+            return toExitStatus(response.getExitStatus(), response.hasExitedAt(), response.getExitedAt());
         } catch (StatusRuntimeException e) {
             throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.TASK);
         }
@@ -200,5 +197,12 @@ public final class TasksServiceImpl implements Tasks {
                 throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.TASK);
             }
         }
+    }
+
+    /** Maps an exit response to {@link ExitStatus}, preserving sub-second precision (nanos). */
+    private static ExitStatus toExitStatus(int exitStatus, boolean hasExitedAt,
+                                           com.google.protobuf.Timestamp exitedAt) {
+        return new ExitStatus(exitStatus,
+                hasExitedAt ? Instant.ofEpochSecond(exitedAt.getSeconds(), exitedAt.getNanos()) : null);
     }
 }

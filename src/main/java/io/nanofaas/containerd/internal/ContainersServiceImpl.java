@@ -33,7 +33,6 @@ public final class ContainersServiceImpl implements Containers {
     private final String snapshotter;
     private final String runtimeName;
     private final ExecutorService ioExecutor = Executors.newVirtualThreadPerTaskExecutor();
-    private final IoManager ioManager = new IoManager();
 
     public ContainersServiceImpl(ManagedChannel channel, String snapshotter, String runtimeName, String runtimeBinaryName) {
         this.channel = channel;
@@ -293,7 +292,7 @@ public final class ContainersServiceImpl implements Containers {
         }
 
         String execId = "exec-" + UUID.randomUUID();
-        var fifos = ioManager.createFifoSet(id + "-" + execId);
+        var fifos = IoManager.createFifoSet(id + "-" + execId);
         // Open the read ends BEFORE the Exec RPC: open(2) blocks until the shim opens its write
         // end (which happens as the process spawns), so a process that exits immediately cannot
         // win the race and leave us with output we never read.
@@ -333,7 +332,7 @@ public final class ContainersServiceImpl implements Containers {
             } catch (RuntimeException e) {
                 log.warn("failed to delete exec process {} for container {}", execId, id, e);
             }
-            ioManager.cleanup(fifos);
+            IoManager.cleanup(fifos);
         }
     }
 

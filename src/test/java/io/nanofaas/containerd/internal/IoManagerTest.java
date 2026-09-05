@@ -11,8 +11,7 @@ class IoManagerTest {
 
     @Test
     void fifoRoundTrip() throws Exception {
-        IoManager io = new IoManager();
-        var fifos = io.createFifoSet("test");
+        var fifos = IoManager.createFifoSet("test");
         try {
             assertThat(Files.exists(fifos.stdout())).isTrue();
             var executor = Executors.newVirtualThreadPerTaskExecutor();
@@ -21,7 +20,7 @@ class IoManagerTest {
             writer.get();
             assertThat(read).isEqualTo("hello fifo\n");
         } finally {
-            io.cleanup(fifos);
+            IoManager.cleanup(fifos);
             assertThat(Files.exists(fifos.dir())).isFalse();
         }
     }

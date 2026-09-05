@@ -32,7 +32,7 @@ public final class DefaultContainerdClient implements ContainerdClient {
         this.runtimeName = runtimeName;
         this.runtimeBinaryName = runtimeBinaryName;
         // The NamespaceInterceptor is attached at the channel level, so EVERY call made through
-        // this channel (version() and every facade built on channel()) carries the namespace header.
+        // this channel (version() and every facade built on it) carries the namespace header.
         this.channel = GrpcChannelFactory.createUnixDomainSocketChannel(socketPath,
                 new NamespaceInterceptor(namespace));
         log.debug("containerd client created (namespace={}, snapshotter={}, runtime={}, binaryName={})",
@@ -85,14 +85,6 @@ public final class DefaultContainerdClient implements ContainerdClient {
     @Override
     public String runtimeName() {
         return runtimeName;
-    }
-
-    String runtimeBinaryName() {
-        return runtimeBinaryName;
-    }
-
-    ManagedChannel channel() {
-        return channel;
     }
 
     @Override

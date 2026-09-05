@@ -32,6 +32,12 @@ public final class EventsServiceImpl implements Events {
     private final String namespace;
     private final java.util.concurrent.ExecutorService handlerExecutor =
             Executors.newVirtualThreadPerTaskExecutor();
+    private final java.util.concurrent.ScheduledExecutorService reconnectScheduler =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "containerd-events-reconnect");
+                t.setDaemon(true);
+                return t;
+            });
 
     public EventsServiceImpl(ManagedChannel channel, String namespace) {
         this.stub = containerd.services.events.v1.EventsGrpc.newStub(channel);
@@ -117,16 +123,8 @@ public final class EventsServiceImpl implements Events {
         scheduleReconnect(delay, () -> connect(filter, handler, closed, backoff));
     }
 
-    /** Schedules a one-shot reconnect on a short-lived daemon scheduler. */
+    /** Schedules a one-shot reconnect on the shared daemon scheduler. */
     private void scheduleReconnect(long delayMs, Runnable reconnect) {
-        var scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "containerd-events-reconnect");
-            t.setDaemon(true);
-            return t;
-        });
-        scheduler.schedule(() -> {
-            scheduler.shutdown();
-            reconnect.run();
-        }, delayMs, TimeUnit.MILLISECONDS);
+        reconnectScheduler.schedule(reconnect, delayMs, TimeUnit.MILLISECONDS);
     }
 }
