@@ -7,7 +7,7 @@ import io.nanofaas.containerd.*;
 /** Maps gRPC status codes to library exceptions, preserving the original as cause. */
 public final class StatusExceptionMapper {
 
-    public enum ResourceKind { CONTAINER, IMAGE, TASK, SNAPSHOT, CONTENT, GENERAL }
+    public enum ResourceKind { CONTAINER, IMAGE, TASK, SNAPSHOT, GENERAL }
 
     private StatusExceptionMapper() {
     }
