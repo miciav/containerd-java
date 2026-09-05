@@ -23,7 +23,8 @@ public final class DefaultContainerdClient implements ContainerdClient {
     // Concrete type (not the Containers SPI) so close() can shut down its IO virtual-thread pool.
     private final ContainersServiceImpl containers;
     private final Tasks tasks;
-    private final Events events;
+    // Concrete type (not the Events SPI) so close() can shut down its handler/reconnect executors.
+    private final EventsServiceImpl events;
 
     public DefaultContainerdClient(String socketPath, String namespace, String snapshotter,
                                    String runtimeName, String runtimeBinaryName) {
@@ -91,6 +92,7 @@ public final class DefaultContainerdClient implements ContainerdClient {
     public void close() {
         log.debug("closing containerd client");
         containers.close();
+        events.close();
         channel.shutdownNow();
     }
 }

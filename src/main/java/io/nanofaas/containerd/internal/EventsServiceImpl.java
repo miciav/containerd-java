@@ -127,4 +127,10 @@ public final class EventsServiceImpl implements Events {
     private void scheduleReconnect(long delayMs, Runnable reconnect) {
         reconnectScheduler.schedule(reconnect, delayMs, TimeUnit.MILLISECONDS);
     }
+
+    /** Shuts down the handler and reconnect executors; called when the owning client is closed. */
+    public void close() {
+        handlerExecutor.shutdown();
+        reconnectScheduler.shutdown();
+    }
 }
