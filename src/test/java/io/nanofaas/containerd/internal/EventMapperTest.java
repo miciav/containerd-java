@@ -17,9 +17,7 @@ class EventMapperTest {
                 .setTopic("/tasks/start")
                 .setNamespace("nanofaas")
                 .setTimestamp(Timestamp.newBuilder().setSeconds(1700000000))
-                .setEvent(Any.newBuilder()
-                        .setTypeUrl(payload.getDescriptorForType().getFullName())
-                        .setValue(payload.toByteString()))
+                .setEvent(Any.pack(payload))
                 .build();
 
         Event event = EventMapper.map(envelope);
@@ -37,9 +35,7 @@ class EventMapperTest {
                 .setContainerId("abc").setPid(77).setExitStatus(3).build();
         var envelope = containerd.types.Envelope.newBuilder()
                 .setTopic("/tasks/delete")
-                .setEvent(Any.newBuilder()
-                        .setTypeUrl(payload.getDescriptorForType().getFullName())
-                        .setValue(payload.toByteString()))
+                .setEvent(Any.pack(payload))
                 .build();
 
         Event event = EventMapper.map(envelope);
