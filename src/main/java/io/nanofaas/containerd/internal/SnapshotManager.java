@@ -8,28 +8,22 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
-/** Prepares/removes snapshots for container root filesystems. */
+/**
+ * Prepares/removes snapshots for container root filesystems. The snapshotter is supplied per
+ * call, so the same instance serves both a client's default snapshotter and a per-container one.
+ */
 public final class SnapshotManager {
 
     private static final Logger log = LoggerFactory.getLogger(SnapshotManager.class);
 
-    private final ManagedChannel channel;
     private final containerd.services.snapshots.v1.SnapshotsGrpc.SnapshotsBlockingStub stub;
-    private final String snapshotter;
 
-    public SnapshotManager(ManagedChannel channel, String snapshotter) {
-        this.channel = channel;
+    public SnapshotManager(ManagedChannel channel) {
         this.stub = containerd.services.snapshots.v1.SnapshotsGrpc.newBlockingStub(channel);
-        this.snapshotter = snapshotter;
-    }
-
-    /** Returns a manager bound to an arbitrary snapshotter. */
-    public SnapshotManager forSnapshotter(String other) {
-        return new SnapshotManager(channel, other);
     }
 
     /** Prepares an active snapshot keyed by {@code key}, parented on {@code parent} (may be empty). */
-    public List<containerd.types.Mount> prepare(String key, String parent) {
+    public List<containerd.types.Mount> prepare(String snapshotter, String key, String parent) {
         log.debug("snapshot prepare: snapshotter={} key={} parent={}", snapshotter, key, parent);
         var response = stub.prepare(containerd.services.snapshots.v1.PrepareSnapshotRequest.newBuilder()
                 .setSnapshotter(snapshotter)
@@ -40,7 +34,7 @@ public final class SnapshotManager {
     }
 
     /** Returns the mounts for an existing snapshot key. */
-    public List<containerd.types.Mount> mounts(String key) {
+    public List<containerd.types.Mount> mounts(String snapshotter, String key) {
         return List.copyOf(stub.mounts(containerd.services.snapshots.v1.MountsRequest.newBuilder()
                 .setSnapshotter(snapshotter)
                 .setKey(key)
@@ -48,7 +42,7 @@ public final class SnapshotManager {
     }
 
     /** Removes a snapshot; idempotent — a missing snapshot is logged at DEBUG and ignored. */
-    public void remove(String key) {
+    public void remove(String snapshotter, String key) {
         log.debug("snapshot remove: snapshotter={} key={}", snapshotter, key);
         try {
             stub.remove(containerd.services.snapshots.v1.RemoveSnapshotRequest.newBuilder()

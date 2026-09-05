@@ -26,7 +26,7 @@ public final class TasksServiceImpl implements Tasks {
     public TasksServiceImpl(ManagedChannel channel, String runtimeBinaryName) {
         this.stub = containerd.services.tasks.v1.TasksGrpc.newBlockingStub(channel);
         this.containers = containerd.services.containers.v1.ContainersGrpc.newBlockingStub(channel);
-        this.snapshots = new SnapshotManager(channel, null); // snapshotter resolved per container
+        this.snapshots = new SnapshotManager(channel);
         this.runtimeBinaryName = runtimeBinaryName;
     }
 
@@ -39,7 +39,7 @@ public final class TasksServiceImpl implements Tasks {
         } catch (StatusRuntimeException e) {
             throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.CONTAINER);
         }
-        var mounts = snapshots.forSnapshotter(container.getSnapshotter()).mounts(container.getSnapshotKey());
+        var mounts = snapshots.mounts(container.getSnapshotter(), container.getSnapshotKey());
         log.debug("task create: containerId={} snapshotter={} snapshotKey={}",
                 containerId, container.getSnapshotter(), container.getSnapshotKey());
 

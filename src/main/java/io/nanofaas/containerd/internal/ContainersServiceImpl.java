@@ -37,7 +37,7 @@ public final class ContainersServiceImpl implements Containers {
     public ContainersServiceImpl(ManagedChannel channel, String snapshotter, String runtimeName, String runtimeBinaryName) {
         this.channel = channel;
         this.stub = containerd.services.containers.v1.ContainersGrpc.newBlockingStub(channel);
-        this.snapshots = new SnapshotManager(channel, snapshotter);
+        this.snapshots = new SnapshotManager(channel);
         this.rootfsResolver = new ImageRootfsResolver(channel);
         this.tasks = new TasksServiceImpl(channel, runtimeBinaryName);
         this.snapshotter = snapshotter;
@@ -75,7 +75,7 @@ public final class ContainersServiceImpl implements Containers {
             return ProtoMapper.map(created);
         } catch (StatusRuntimeException e) {
             try {
-                snapshots.remove(spec.id());
+                snapshots.remove(snapshotter, spec.id());
             } catch (StatusRuntimeException cleanupFailure) {
                 log.warn("failed to clean up snapshot {} after container create failure", spec.id(), cleanupFailure);
             }
@@ -93,7 +93,7 @@ public final class ContainersServiceImpl implements Containers {
      */
     private void prepareSnapshotOrThrow(String id, String parentChainId) {
         try {
-            snapshots.prepare(id, parentChainId);
+            snapshots.prepare(snapshotter, id, parentChainId);
         } catch (StatusRuntimeException e) {
             if (e.getStatus().getCode() != io.grpc.Status.Code.ALREADY_EXISTS) {
                 throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.SNAPSHOT);
@@ -103,8 +103,8 @@ public final class ContainersServiceImpl implements Containers {
             }
             log.warn("removing stale snapshot {} (no container with that id) and retrying prepare", id);
             try {
-                snapshots.remove(id);
-                snapshots.prepare(id, parentChainId);
+                snapshots.remove(snapshotter, id);
+                snapshots.prepare(snapshotter, id, parentChainId);
             } catch (StatusRuntimeException retryFailure) {
                 throw StatusExceptionMapper.map(retryFailure, StatusExceptionMapper.ResourceKind.SNAPSHOT);
             }
@@ -193,7 +193,7 @@ public final class ContainersServiceImpl implements Containers {
                 .setId(id).build());
 
         if (options.removeSnapshot() && !container.getSnapshotKey().isEmpty()) {
-            snapshots.forSnapshotter(container.getSnapshotter()).remove(container.getSnapshotKey()); // idempotent
+            snapshots.remove(container.getSnapshotter(), container.getSnapshotKey()); // idempotent
         }
         log.debug("container remove complete: id={}", id);
     }
