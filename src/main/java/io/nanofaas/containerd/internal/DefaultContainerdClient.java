@@ -28,6 +28,13 @@ public final class DefaultContainerdClient implements ContainerdClient {
 
     public DefaultContainerdClient(String socketPath, String namespace, String snapshotter,
                                    String runtimeName, String runtimeBinaryName) {
+        this(socketPath, namespace, snapshotter, runtimeName, runtimeBinaryName,
+                ContainersServiceImpl.DEFAULT_STOP_TIMEOUT);
+    }
+
+    public DefaultContainerdClient(String socketPath, String namespace, String snapshotter,
+                                   String runtimeName, String runtimeBinaryName,
+                                   java.time.Duration stopTimeout) {
         this.namespace = namespace;
         this.snapshotter = snapshotter;
         this.runtimeName = runtimeName;
@@ -41,7 +48,7 @@ public final class DefaultContainerdClient implements ContainerdClient {
         // One shared facade per client, cached in a final field (the plan says "lazily", but a
         // final field rules that out; building it here is free — it only constructs gRPC stubs).
         this.images = new ImagesServiceImpl(channel, snapshotter);
-        this.containers = new ContainersServiceImpl(channel, snapshotter, runtimeName, runtimeBinaryName);
+        this.containers = new ContainersServiceImpl(channel, snapshotter, runtimeName, runtimeBinaryName, stopTimeout);
         this.tasks = new TasksServiceImpl(channel, runtimeBinaryName);
         this.events = new EventsServiceImpl(channel, namespace);
     }

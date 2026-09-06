@@ -35,10 +35,14 @@ public final class SnapshotManager {
 
     /** Returns the mounts for an existing snapshot key. */
     public List<containerd.types.Mount> mounts(String snapshotter, String key) {
-        return List.copyOf(stub.mounts(containerd.services.snapshots.v1.MountsRequest.newBuilder()
-                .setSnapshotter(snapshotter)
-                .setKey(key)
-                .build()).getMountsList());
+        try {
+            return List.copyOf(stub.mounts(containerd.services.snapshots.v1.MountsRequest.newBuilder()
+                    .setSnapshotter(snapshotter)
+                    .setKey(key)
+                    .build()).getMountsList());
+        } catch (StatusRuntimeException e) {
+            throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.SNAPSHOT);
+        }
     }
 
     /** Removes a snapshot; idempotent — a missing snapshot is logged at DEBUG and ignored. */

@@ -48,24 +48,21 @@ class ProtoMapperTest {
     }
 
     @Test
-    void vendoredStatusEnumNumbersAlignWithSwitch() {
-        // mapStatus switches on raw enum numbers, so the vendored numbers are part of the contract
-        assertThat(containerd.v1.types.Status.CREATED.getNumber()).isEqualTo(1);
-        assertThat(containerd.v1.types.Status.RUNNING.getNumber()).isEqualTo(2);
-        assertThat(containerd.v1.types.Status.STOPPED.getNumber()).isEqualTo(3);
-        assertThat(containerd.v1.types.Status.PAUSED.getNumber()).isEqualTo(4);
-        assertThat(containerd.v1.types.Status.PAUSING.getNumber()).isEqualTo(5);
-
-        assertThat(ProtoMapper.mapStatus(containerd.v1.types.Status.CREATED.getNumber())).isEqualTo(ContainerState.CREATED);
-        assertThat(ProtoMapper.mapStatus(containerd.v1.types.Status.PAUSED.getNumber())).isEqualTo(ContainerState.PAUSED);
-        assertThat(ProtoMapper.mapStatus(containerd.v1.types.Status.PAUSING.getNumber())).isEqualTo(ContainerState.PAUSING);
+    void mapsEveryStatusTheVendoredEnumDefines() {
+        assertThat(ProtoMapper.mapStatus(containerd.v1.types.Status.CREATED)).isEqualTo(ContainerState.CREATED);
+        assertThat(ProtoMapper.mapStatus(containerd.v1.types.Status.RUNNING)).isEqualTo(ContainerState.RUNNING);
+        assertThat(ProtoMapper.mapStatus(containerd.v1.types.Status.STOPPED)).isEqualTo(ContainerState.STOPPED);
+        assertThat(ProtoMapper.mapStatus(containerd.v1.types.Status.PAUSED)).isEqualTo(ContainerState.PAUSED);
+        assertThat(ProtoMapper.mapStatus(containerd.v1.types.Status.PAUSING)).isEqualTo(ContainerState.PAUSING);
     }
 
     @Test
-    void mapsTaskStatusEnum() {
-        assertThat(ProtoMapper.mapStatus(containerd.v1.types.Status.RUNNING.getNumber())).isEqualTo(ContainerState.RUNNING);
-        assertThat(ProtoMapper.mapStatus(containerd.v1.types.Status.STOPPED.getNumber())).isEqualTo(ContainerState.STOPPED);
-        assertThat(ProtoMapper.mapStatus(999)).isEqualTo(ContainerState.UNKNOWN);
+    void mapsUnknownAndFutureStatusesToUnknown() {
+        assertThat(ProtoMapper.mapStatus(containerd.v1.types.Status.UNKNOWN)).isEqualTo(ContainerState.UNKNOWN);
+        // A status number a newer containerd introduces must not be guessed at.
+        assertThat(ProtoMapper.mapStatus(containerd.v1.types.Status.UNRECOGNIZED)).isEqualTo(ContainerState.UNKNOWN);
+        assertThat(containerd.v1.types.Status.forNumber(6))
+                .as("v2.2.1 defines no status 6").isNull();
     }
 
     @Test

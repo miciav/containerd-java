@@ -4,13 +4,15 @@ import io.nanofaas.containerd.internal.DefaultContainerdClient;
 
 import java.util.Objects;
 
-public final class ContainerdClientBuilder implements ContainerdClient.Builder {
+/** Package-private: callers reach this through {@link ContainerdClient#builder()}. */
+final class ContainerdClientBuilder implements ContainerdClient.Builder {
 
     private String socketPath = "/run/containerd/containerd.sock";
     private String namespace = "nanofaas";
     private String snapshotter = "overlayfs";
     private String runtimeName = "io.containerd.runc.v2";
     private String runtimeBinaryName;
+    private java.time.Duration stopTimeout = java.time.Duration.ofSeconds(10);
 
     @Override
     public ContainerdClient.Builder socketPath(String socketPath) {
@@ -43,7 +45,18 @@ public final class ContainerdClientBuilder implements ContainerdClient.Builder {
     }
 
     @Override
+    public ContainerdClient.Builder stopTimeout(java.time.Duration stopTimeout) {
+        Objects.requireNonNull(stopTimeout, "stopTimeout");
+        if (stopTimeout.isNegative() || stopTimeout.isZero()) {
+            throw new IllegalArgumentException("stopTimeout must be positive, got: " + stopTimeout);
+        }
+        this.stopTimeout = stopTimeout;
+        return this;
+    }
+
+    @Override
     public ContainerdClient build() {
-        return new DefaultContainerdClient(socketPath, namespace, snapshotter, runtimeName, runtimeBinaryName);
+        return new DefaultContainerdClient(socketPath, namespace, snapshotter, runtimeName,
+                runtimeBinaryName, stopTimeout);
     }
 }

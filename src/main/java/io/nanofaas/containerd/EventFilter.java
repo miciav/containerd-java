@@ -16,8 +16,18 @@ public final class EventFilter {
         this.topics = List.copyOf(topics);
     }
 
+    /**
+     * Selects the given topics. Note that {@code EventFilter.topics()} with no argument does not
+     * compile — it resolves against the instance getter {@link #topics()} — so the "every topic"
+     * filter has its own factory: {@link #all()}.
+     */
     public static EventFilter topics(String... topics) {
         return new EventFilter(Arrays.asList(topics));
+    }
+
+    /** Every topic in the client's namespace. */
+    public static EventFilter all() {
+        return new EventFilter(List.of());
     }
 
     /** The selected topics; empty means all topics in the namespace. */

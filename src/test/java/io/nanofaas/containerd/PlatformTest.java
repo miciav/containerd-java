@@ -16,6 +16,14 @@ class PlatformTest {
     }
 
     @Test
+    void normalizesArchitectureCaseAndWhitespaceLikeOs() {
+        // os was lowercased but arch was matched case-sensitively, so "AMD64" fell through raw.
+        assertThat(Platform.fromOsArch("Linux", "AMD64")).isEqualTo(new Platform("linux", "amd64"));
+        assertThat(Platform.fromOsArch("Linux", " aarch64 ")).isEqualTo(new Platform("linux", "arm64"));
+        assertThat(Platform.fromOsArch("Linux", "ARM64")).isEqualTo(new Platform("linux", "arm64"));
+    }
+
+    @Test
     void hostPlatformMatchesRunningJvm() {
         var host = Platform.host();
         assertThat(host.os()).isNotBlank();

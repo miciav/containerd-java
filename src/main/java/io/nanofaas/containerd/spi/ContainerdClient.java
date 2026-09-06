@@ -58,6 +58,12 @@ public interface ContainerdClient extends AutoCloseable {
          */
         Builder runtimeBinaryName(String runtimeBinaryName);
 
+        /**
+         * How long {@link Containers#stop} waits after SIGTERM before sending SIGKILL.
+         * Default 10 seconds.
+         */
+        Builder stopTimeout(java.time.Duration stopTimeout);
+
         ContainerdClient build();
     }
 }

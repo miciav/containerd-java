@@ -110,9 +110,14 @@ Subscription sub = client.events().subscribe(
 sub.close();
 ```
 
+Use `EventFilter.all()` for every topic in the namespace — note that `EventFilter.topics()`
+with no argument does not compile, because it resolves against the instance getter of the same
+name.
+
 The handler runs on a virtual thread per event, so a slow consumer never blocks stream
 delivery. A dropped stream auto-reconnects with exponential backoff (1s, doubling, capped at
-30s), until `close()` is called.
+30s), until `close()` is called. `close()` cancels the underlying gRPC call, and closing the
+client cancels any subscription still open.
 
 ## containerd configuration
 
@@ -154,6 +159,12 @@ ContainerdClient.builder().namespace("my-namespace").build();
 ```
 
 ## Snapshotter configuration
+
+`stop()` sends SIGTERM, waits, then SIGKILL. The grace period is 10s by default and
+configurable via `.stopTimeout(Duration)` on the client builder.
+
+Container ids follow containerd's own rule: alphanumeric runs joined by single `.`, `_` or `-`
+separators, at most 76 characters — so `my-fn-01` is valid, `-fn`, `fn-` and `a..b` are not.
 
 Default snapshotter: `overlayfs`. Configurable via `.snapshotter(...)`. Each container gets an
 **active** snapshot keyed by its container id, parented on the image's top ChainID

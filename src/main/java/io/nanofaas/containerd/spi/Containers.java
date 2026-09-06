@@ -27,7 +27,9 @@ public interface Containers {
     int start(String id);
 
     /**
-     * Stops a running container: SIGTERM, wait up to 10s, then SIGKILL, then task delete.
+     * Stops a running container: SIGTERM, wait up to the client's
+     * {@link ContainerdClient.Builder#stopTimeout stopTimeout} (10s by default), then SIGKILL,
+     * then task delete.
      * Idempotent — a container with no task returns an empty {@link java.util.Optional}.
      */
     java.util.Optional<ExitStatus> stop(String id);

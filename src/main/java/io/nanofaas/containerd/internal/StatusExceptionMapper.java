@@ -13,7 +13,7 @@ public final class StatusExceptionMapper {
     }
 
     public static ContainerdException map(StatusRuntimeException e, ResourceKind kind) {
-        String message = "containerd " + kind.name().toLowerCase() + " operation failed: " + e.getStatus().getCode();
+        String message = message(e, kind);
         if (e.getStatus().getCode() == Status.Code.NOT_FOUND) {
             return switch (kind) {
                 case CONTAINER -> new ContainerNotFoundException(message, e);
@@ -26,5 +26,17 @@ public final class StatusExceptionMapper {
             return new ContainerAlreadyExistsException(message, e);
         }
         return new ContainerdException(message, e);
+    }
+
+    /**
+     * Builds the exception message. containerd's own explanation travels in the status
+     * description ("container does not exist", "snapshot does not exist: not found", ...);
+     * without it the message is just a bare code, which says nothing the type does not already.
+     */
+    private static String message(StatusRuntimeException e, ResourceKind kind) {
+        String message = "containerd " + kind.name().toLowerCase() + " operation failed: "
+                + e.getStatus().getCode();
+        String description = e.getStatus().getDescription();
+        return description == null || description.isBlank() ? message : message + ": " + description;
     }
 }

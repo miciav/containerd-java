@@ -55,44 +55,43 @@ public final class OciSpecBuilder {
 
     /** Builds the process spec for exec as a typeurl Any (JSON payload). */
     public static Any buildExecSpec(List<String> command, Map<String, String> environment, String workingDir) {
-        List<String> args = command == null || command.isEmpty() ? List.of("/bin/sh") : command;
-        List<String> env = new ArrayList<>();
-        env.add("PATH=" + DEFAULT_PATH);
-        environment.forEach((k, v) -> env.add(k + "=" + v));
-
-        Struct.Builder process = Struct.newBuilder()
-                .putFields("terminal", boolValue(false))
-                .putFields("user", structValue(Struct.newBuilder()
-                        .putFields("uid", numberValue(0))
-                        .putFields("gid", numberValue(0))
-                        .build()))
-                .putFields("args", stringListValue(args))
-                .putFields("env", stringListValue(env))
-                .putFields("cwd", stringValue(workingDir != null ? workingDir : "/"))
-                .putFields("noNewPrivileges", boolValue(true))
-                .putFields("capabilities", structValue(capabilitiesValue()));
+        Struct.Builder process = process(command, environment, workingDir, null, List.of());
+        // An exec inherits the container's privileges; it must not be able to gain more.
+        process.putFields("noNewPrivileges", boolValue(true));
         return toAny(PROCESS_TYPE_URL, process.build());
     }
 
     private static Struct.Builder buildProcess(ContainerSpec spec) {
-        List<String> args = spec.command() == null || spec.command().isEmpty()
-                ? List.of("/bin/sh") : spec.command();
+        Struct.Builder process = process(spec.command(), spec.environment(), spec.workingDir(),
+                spec.user(), List.of("TERM=xterm"));
+        // The init process may raise privileges (a container entrypoint that calls setuid);
+        // execs into it may not, hence the difference with buildExecSpec.
+        process.putFields("noNewPrivileges", boolValue(false));
+        process.putFields("rlimits", rlimitsValue());
+        return process;
+    }
+
+    /**
+     * The fields every OCI process spec carries, shared by the container's init process and by
+     * exec. {@code user} is {@code null} for exec (which always runs as uid 0);
+     * {@code extraEnv} is prepended after PATH and before the caller's environment.
+     */
+    private static Struct.Builder process(List<String> command, Map<String, String> environment,
+                                          String workingDir, String user, List<String> extraEnv) {
+        List<String> args = command == null || command.isEmpty() ? List.of("/bin/sh") : command;
         List<String> env = new ArrayList<>();
         env.add("PATH=" + DEFAULT_PATH);
-        env.add("TERM=xterm");
-        spec.environment().forEach((k, v) -> env.add(k + "=" + v));
-
-        Struct.Builder process = Struct.newBuilder()
+        env.addAll(extraEnv);
+        if (environment != null) {
+            environment.forEach((k, v) -> env.add(k + "=" + v));
+        }
+        return Struct.newBuilder()
                 .putFields("terminal", boolValue(false))
+                .putFields("user", structValue(parseUser(user)))
                 .putFields("args", stringListValue(args))
                 .putFields("env", stringListValue(env))
-                .putFields("cwd", stringValue(spec.workingDir() != null ? spec.workingDir() : "/"))
-                .putFields("noNewPrivileges", boolValue(false))
-                .putFields("capabilities", structValue(capabilitiesValue()))
-                .putFields("rlimits", rlimitsValue());
-
-        process.putFields("user", structValue(parseUser(spec.user())));
-        return process;
+                .putFields("cwd", stringValue(workingDir != null ? workingDir : "/"))
+                .putFields("capabilities", structValue(capabilitiesValue()));
     }
 
     private static Struct parseUser(String user) {
@@ -107,7 +106,9 @@ public final class OciSpecBuilder {
                     throw new IllegalArgumentException("user must be \"uid:gid\" or a username, got: " + user, e);
                 }
             }
-            // bare username: uid/gid stay 0; the runtime resolves the name. Documented limitation.
+            // A bare username cannot be honoured: the OCI runtime spec's process.user carries
+            // uid/gid only, with no field for a name, so there is nothing to hand the runtime.
+            // The process runs as uid 0. Pass "uid:gid" to select a user.
         }
         return b.build();
     }
