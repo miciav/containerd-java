@@ -75,16 +75,16 @@ an `exec` inside a task is a `Process`. See [Conceptual glossary](#conceptual-gl
 ## Installation
 
 ```bash
-./gradlew build          # compiles, runs unit tests, produces build/libs/containerd-java-0.2.0.jar
+./gradlew build          # compiles, runs unit tests, produces build/libs/containerd-java-0.3.0.jar
 ./gradlew publishToMavenLocal   # if you add the maven-publish plugin for local consumption
 ```
 
 `build` also produces `-sources.jar` and `-javadoc.jar` alongside the main artifact.
 
-Gradle coordinates (once published): `io.nanofaas:containerd-java:0.2.0`.
+Gradle coordinates (once published): `io.nanofaas:containerd-java:0.3.0`.
 
-Changes between releases are listed in [CHANGELOG.md](CHANGELOG.md). Note that 0.2.0 carries
-breaking changes from 0.1.0.
+Changes between releases are listed in [CHANGELOG.md](CHANGELOG.md). Note that 0.3.0 requires Java 22 and carries other breaking
+changes; 0.2.0 did too.
 
 ## Basic usage
 
