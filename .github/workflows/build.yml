@@ -84,6 +84,8 @@ jobs:
       # than testing against an API the vendored protos do not match. Reading the pin from the
       # build file keeps the two from drifting apart.
       - name: Install pinned containerd and runc
+        # Reads the pinned version out of the build file, so it runs from the project directory.
+        working-directory: containerd-java
         run: |
           set -euo pipefail
           version="$(grep -oP 'val containerdApiVersion = "v\K[0-9.]+' build.gradle.kts)"
