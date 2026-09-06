@@ -6,7 +6,20 @@ versions may carry breaking changes.
 
 ## [Unreleased]
 
+### Breaking
+
+- **Requires Java 22**, up from 21. `mkfifo` now goes through the Foreign Function and Memory API,
+  which is final from 22. The JNR binding it replaced generates its native stubs as bytecode at
+  runtime, which a GraalVM native image cannot do at all.
+
 ### Added
+
+- **GraalVM native image support.** The library ships reachability metadata under
+  `META-INF/native-image/io.nanofaas/containerd-java/`, so a consumer's native build works without
+  their running the tracing agent. Verified rather than assumed: a native image of the example
+  drives a real containerd end to end — pull, create, start, exec, stop, delete — and CI builds and
+  runs it on every push, checking the output rather than just the exit code.
+- `./gradlew nativeCompile` builds that image.
 
 - `ContainerSpec.hostNetwork(true)` shares the host's network stack instead of giving the
   container a private, unconfigured namespace. Containers previously had only `lo`, with no
@@ -59,6 +72,10 @@ versions may carry breaking changes.
   which is usually amd64. On an arm64 host that produced a container whose every binary was the
   wrong architecture, reported by the runtime as nothing more than `exec format error`. It now
   says which platform was wanted and which the image offers.
+
+### Removed
+
+- The `jnr-posix` dependency. It existed for one call, `mkfifo`.
 
 ### Changed
 

@@ -24,7 +24,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '25'
 
       # Also validates the Gradle wrapper jar against the published checksums.
       - uses: gradle/actions/setup-gradle@v6
@@ -41,15 +41,18 @@ jobs:
           retention-days: 7
 
   integration:
-    name: integration tests (real containerd)
+    name: integration tests + native image (real containerd)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v6
+      # GraalVM rather than a plain JDK: it is a JDK 25 like any other for the integration tests,
+      # and it also carries native-image, so one job covers both without installing containerd twice.
+      - uses: graalvm/setup-graalvm@v1
         with:
-          distribution: temurin
-          java-version: '21'
+          java-version: '25'
+          distribution: graalvm-community
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: gradle/actions/setup-gradle@v6
 
@@ -101,6 +104,23 @@ jobs:
           echo "integration tests: ${total} run, ${skipped} skipped"
           [ "$total" -gt 0 ] || { echo "::error::no integration tests ran"; exit 1; }
           [ "$skipped" -eq 0 ] || { echo "::error::${skipped} integration tests skipped (containerd unreachable?)"; exit 1; }
+
+      # The metadata this library ships is only correct if an image built from it actually runs.
+      # Compiling proves nothing on its own: the first attempt here built cleanly and then died on
+      # the first exec, because JNR generated its native stubs at runtime.
+      - name: Build the example as a native image
+        run: ./gradlew nativeCompile --stacktrace
+
+      - name: Run the native image against containerd
+        run: |
+          set -euo pipefail
+          binary=build/native/nativeCompile/containerd-java-example
+          [ -x "$binary" ] || { echo "::error::$binary was not produced"; exit 1; }
+          output=$("$binary" 2>&1) || { echo "$output"; echo "::error::the native image failed"; exit 1; }
+          echo "$output"
+          # It exits 0 even if it silently skipped the interesting part, so check what it did.
+          grep -q "exec stdout=hello from containerd" <<<"$output" \
+            || { echo "::error::the native image ran but did not exec inside a container"; exit 1; }
 
       - name: Upload test report
         if: failure()

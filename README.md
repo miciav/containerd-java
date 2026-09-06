@@ -36,7 +36,8 @@ try (ContainerdClient client = ContainerdClient.builder()
 - Linux (the UDS transport is Netty epoll; no other OS is supported)
 - containerd 2.x — developed and tested against **v2.2.1** on both `linux/amd64` and
   `linux/arm64`
-- Java 21+ (Gradle toolchain auto-provisions 21 if only a newer JDK is installed)
+- Java 22+ (the Foreign Function and Memory API's floor; the build itself uses a 25 toolchain
+  and targets 22 bytecode)
 - `crun` or `runc` as the OCI runtime, launched by containerd's `io.containerd.runc.v2` shim
 - Gradle (wrapper included, no local Gradle install needed)
 
@@ -285,7 +286,7 @@ concepts is the fastest way to reason about this library correctly:
    period, memory limit/swap, pids) live under `linux.resources`.
 7. **Concurrency model:** one shared `ManagedChannel` + thread-safe blocking stubs per client;
    no thread per container. FIFO IO for exec (`IoManager`) and event handler dispatch
-   (`EventsServiceImpl`) both run on Java 21 virtual threads; event streams auto-reconnect with
+   (`EventsServiceImpl`) both run on virtual threads; event streams auto-reconnect with
    exponential backoff.
 8. **Known limitations:** Linux-only; anonymous registry pulls (no auth customization yet); no
    checkpoint/restore, TTY, or `Tasks.Update`; `exec` requires a running task; event topic
@@ -335,6 +336,26 @@ is held by a containerd lease, so a process killed inside it leaves a snapshot c
 collect when the lease expires rather than one that lives forever — an unreferenced snapshot is
 not collected on its own, which was verified rather than assumed. The lease is released as soon as
 the container's own GC reference takes over.
+
+## GraalVM native image
+
+The library is usable from a GraalVM native image and ships the reachability metadata to make that
+work without the consumer running the tracing agent:
+
+```bash
+./gradlew nativeCompile          # needs GRAALVM_HOME, or a GraalVM as the toolchain
+./build/native/nativeCompile/containerd-java-example
+```
+
+`mkfifo` goes through the Foreign Function and Memory API, which is why Java 22 is the floor. The
+JNR binding it replaced generated its native stubs as bytecode at runtime: images built fine and
+then died on the first exec with "Class defined at runtime". Compiling is not the test — CI builds
+the image and runs it against a real containerd, and checks it actually exec'd inside a container
+rather than trusting the exit code.
+
+The metadata was recorded from a real run with the tracing agent, then curated: the example's
+logging backend was dropped, and the Netty epoll library glob widened to both architectures, since
+the agent only sees the one it ran on.
 
 ## Static analysis
 

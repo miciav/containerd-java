@@ -7,6 +7,9 @@ plugins {
     // for amd64 only, so it cannot run on an arm64 host. The plugin also knows the source sets,
     // the compiled classes and the test reports, which the CLI has to be told about by hand.
     id("org.sonarqube") version "7.5.0.8588"
+    // Builds the example as a native image, which is how the GraalVM support is kept honest:
+    // the metadata this library ships is only correct if a real image built from it runs.
+    id("org.graalvm.buildtools.native") version "1.1.12"
 }
 
 group = "io.nanofaas"
@@ -17,10 +20,10 @@ val grpcVersion = "1.73.0"
 val protobufVersion = "4.35.0"
 val nettyVersion = "4.1.121.Final" // MUST match grpc-netty's resolved netty; see Step 5
 val slf4jVersion = "2.0.17"
+val javaRelease = 22 // java.lang.foreign is final from 22; nothing here needs more
 val junitVersion = "5.11.4"
 val junitPlatformVersion = "1.11.4"
 val assertjVersion = "3.27.3"
-val jnrPosixVersion = "3.1.20"
 val javaxAnnotationVersion = "1.3.2"
 
 repositories {
@@ -29,7 +32,11 @@ repositories {
 
 java {
     toolchain {
-        languageVersion.set(JavaLanguageVersion.of(21))
+        // Built with 25; the bytecode targets 22 (see options.release below), which is the
+        // floor the Foreign Function and Memory API sets — mkfifo goes through it, because the
+        // JNR binding it replaced generates classes at runtime and so cannot be compiled into a
+        // GraalVM native image.
+        languageVersion.set(JavaLanguageVersion.of(25))
     }
     withSourcesJar()
     withJavadocJar()
@@ -68,7 +75,6 @@ dependencies {
     compileOnly("javax.annotation:javax.annotation-api:$javaxAnnotationVersion")
     api("com.google.protobuf:protobuf-java:$protobufVersion")
     implementation("com.google.protobuf:protobuf-java-util:$protobufVersion")
-    implementation("com.github.jnr:jnr-posix:$jnrPosixVersion")
     api("org.slf4j:slf4j-api:$slf4jVersion")
 
     // Epoll native libs: both classifiers coexist on the runtime classpath; Netty's native
@@ -88,6 +94,10 @@ dependencies {
     testImplementation("io.netty:netty-transport-classes-epoll:$nettyVersion")
     testRuntimeOnly("org.slf4j:slf4j-simple:$slf4jVersion")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher:$junitPlatformVersion")
+}
+
+tasks.withType<JavaCompile>().configureEach {
+    options.release.set(javaRelease)
 }
 
 tasks.test {
@@ -190,6 +200,29 @@ dependencies {
 }
 tasks.named<JavaExec>("run") {
     classpath += exampleLogging
+}
+
+// ---- GraalVM native image ----
+// The reachability metadata under src/main/resources/META-INF/native-image is what makes a
+// consumer's native build work without their having to run the tracing agent themselves. It was
+// recorded from a real run rather than written by hand, and covers what this library needs from
+// gRPC, Netty and protobuf, plus the mkfifo downcall.
+graalvmNative {
+    binaries {
+        named("main") {
+            imageName.set("containerd-java-example")
+            mainClass.set("io.nanofaas.containerd.example.Example")
+            // Explicit: applying java-library makes the plugin default to a shared library, and
+            // what is wanted here is a runnable image — the point is to prove one starts and
+            // drives containerd, which a .so cannot do.
+            sharedLibrary.set(false)
+            // Netty loads its epoll library through a restricted method; without this the image
+            // prints a warning on every run that a future JDK will turn into a failure.
+            buildArgs.add("--enable-native-access=ALL-UNNAMED")
+        }
+    }
+    // The agent is run by hand when the metadata needs refreshing, not on every build.
+    agent { enabled.set(false) }
 }
 
 // ---- protobuf / gRPC stub generation ----
