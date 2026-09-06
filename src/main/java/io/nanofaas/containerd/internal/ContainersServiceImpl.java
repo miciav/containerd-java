@@ -58,13 +58,13 @@ public final class ContainersServiceImpl implements Containers {
         ProtoMapper.requireValidId(spec.id());
         log.debug("container create start: id={} image={}", spec.id(), spec.image());
 
-        String parentChainId;
+        ImageRootfsResolver.ResolvedImage image;
         try {
-            parentChainId = rootfsResolver.resolveChainId(spec.image());
+            image = rootfsResolver.resolve(spec.image());
         } catch (StatusRuntimeException e) {
             throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.IMAGE);
         }
-        prepareSnapshotOrThrow(spec.id(), parentChainId);
+        prepareSnapshotOrThrow(spec.id(), image.chainId());
 
         try {
             var container = containerd.services.containers.v1.Container.newBuilder()
@@ -72,7 +72,7 @@ public final class ContainersServiceImpl implements Containers {
                     .setImage(spec.image())
                     .setSnapshotter(snapshotter)
                     .setSnapshotKey(spec.id())
-                    .setSpec(OciSpecBuilder.buildContainerSpec(spec))
+                    .setSpec(OciSpecBuilder.buildContainerSpec(spec, image.config()))
                     .setRuntime(containerd.services.containers.v1.Container.Runtime.newBuilder()
                             .setName(runtimeName))
                     // User labels first: the GC ref must win, because losing it would let
@@ -333,6 +333,10 @@ public final class ContainersServiceImpl implements Containers {
         if (task.state() != ContainerState.RUNNING) {
             throw new ExecException("task for container " + id + " is not running (state=" + task.state() + ")");
         }
+        // The environment the exec'd process should see is the one the container runs with, which
+        // containerd already stores as part of the container's spec — no need to resolve the image
+        // again. Without it nothing the image ships is on PATH, and its variables are all missing.
+        StoredSpec container = StoredSpec.parse(containerSpecOf(id));
 
         String execId = "exec-" + UUID.randomUUID();
         var fifos = IoManager.createFifoSet(id + "-" + execId);
@@ -343,7 +347,7 @@ public final class ContainersServiceImpl implements Containers {
         var stderrFuture = ioExecutor.submit(() -> IoManager.readFifo(fifos.stderr()));
         java.util.concurrent.Future<?> stdinFuture = null;
         try {
-            tasks.exec(id, execId, spec, fifos);
+            tasks.exec(id, execId, spec, fifos, container);
             int pid = tasks.startExec(id, execId);
             // Always write and close stdin, even with nothing to send: the write end must be
             // opened and closed for the process to see EOF. Skipping it (as this did when
@@ -384,6 +388,17 @@ public final class ContainersServiceImpl implements Containers {
                 log.warn("failed to delete exec process {} for container {}", execId, id, e);
             }
             IoManager.cleanup(fifos);
+        }
+    }
+
+    /** Returns the OCI spec containerd stores on the container, or null if it cannot be read. */
+    private com.google.protobuf.Any containerSpecOf(String id) {
+        try {
+            return stub.get(containerd.services.containers.v1.GetContainerRequest.newBuilder()
+                    .setId(id).build()).getContainer().getSpec();
+        } catch (StatusRuntimeException e) {
+            log.debug("could not read the stored spec for {}; exec runs without its environment", id, e);
+            return null;
         }
     }
 

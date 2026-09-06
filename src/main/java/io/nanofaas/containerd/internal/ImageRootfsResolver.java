@@ -7,7 +7,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Resolves an image reference to the ChainID of its top layer (the snapshot parent key). */
+/**
+ * Reads what containerd needs to turn an image into a container: the ChainID of its top layer
+ * (the snapshot parent key) and the configuration that shapes how it runs.
+ */
 public final class ImageRootfsResolver {
 
     private static final List<String> INDEX_MEDIA_TYPES = List.of(
@@ -25,7 +28,28 @@ public final class ImageRootfsResolver {
         this.content = new ContentStoreReader(channel);
     }
 
+    /**
+     * An image's snapshot parent key and its run configuration.
+     *
+     * @param chainId ChainID of the top layer, empty for a scratch image
+     * @param config the image's entrypoint, cmd, env, user and working directory
+     */
+    record ResolvedImage(String chainId, ImageConfig config) {
+    }
+
+    /** Returns only the ChainID; see {@link #resolve} when the configuration is needed too. */
     public String resolveChainId(String imageName) {
+        return resolve(imageName).chainId();
+    }
+
+    /**
+     * Resolves an image to its snapshot parent key and run configuration, reading the manifest
+     * and config blobs once for both.
+     *
+     * @param imageName image reference
+     * @return the ChainID and the image configuration
+     */
+    ResolvedImage resolve(String imageName) {
         var image = images.get(containerd.services.images.v1.GetImageRequest.newBuilder()
                 .setName(imageName).build()).getImage();
 
@@ -51,7 +75,41 @@ public final class ImageRootfsResolver {
         for (var v : diffIds) {
             ids.add(v.getStringValue());
         }
-        return ChainIds.chainId(ids);
+        return new ResolvedImage(ChainIds.chainId(ids), imageConfig(config));
+    }
+
+    /**
+     * Reads the {@code config} object of an image configuration. Every field is optional: an
+     * image that declares none of them yields {@link ImageConfig#EMPTY}.
+     */
+    private static ImageConfig imageConfig(com.google.protobuf.Struct imageConfigJson) {
+        var config = imageConfigJson
+                .getFieldsOrDefault("config", com.google.protobuf.Value.getDefaultInstance())
+                .getStructValue();
+        if (config.getFieldsCount() == 0) {
+            return ImageConfig.EMPTY;
+        }
+        String user = field(config, "User");
+        String workingDir = field(config, "WorkingDir");
+        return new ImageConfig(
+                stringList(config, "Entrypoint"),
+                stringList(config, "Cmd"),
+                stringList(config, "Env"),
+                user.isEmpty() ? null : user,
+                workingDir.isEmpty() ? null : workingDir);
+    }
+
+    /** A JSON array of strings, empty when the field is absent or null (both occur in the wild). */
+    private static List<String> stringList(com.google.protobuf.Struct struct, String name) {
+        var value = struct.getFieldsOrDefault(name, com.google.protobuf.Value.getDefaultInstance());
+        if (value.getKindCase() != com.google.protobuf.Value.KindCase.LIST_VALUE) {
+            return List.of();
+        }
+        List<String> items = new ArrayList<>();
+        for (var item : value.getListValue().getValuesList()) {
+            items.add(item.getStringValue());
+        }
+        return items;
     }
 
     private static String pickPlatformManifest(com.google.protobuf.Struct index) {

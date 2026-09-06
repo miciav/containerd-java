@@ -6,6 +6,8 @@ import com.google.protobuf.ListValue;
 import com.google.protobuf.Struct;
 import com.google.protobuf.Value;
 import io.nanofaas.containerd.ContainerSpec;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -17,6 +19,8 @@ import java.util.Map;
  * as JSON bytes, not protobuf.
  */
 public final class OciSpecBuilder {
+
+    private static final Logger log = LoggerFactory.getLogger(OciSpecBuilder.class);
 
     public static final String SPEC_TYPE_URL = "types.containerd.io/opencontainers/runtime-spec/1/Spec";
     public static final String PROCESS_TYPE_URL = "types.containerd.io/opencontainers/runtime-spec/1/Process";
@@ -40,11 +44,23 @@ public final class OciSpecBuilder {
     private OciSpecBuilder() {
     }
 
-    /** Builds the full OCI runtime spec for a container as a typeurl Any (JSON payload). */
+    /** Builds the full OCI runtime spec for a container, ignoring any image configuration. */
     public static Any buildContainerSpec(ContainerSpec spec) {
+        return buildContainerSpec(spec, ImageConfig.EMPTY);
+    }
+
+    /**
+     * Builds the full OCI runtime spec for a container as a typeurl Any (JSON payload), with the
+     * image's configuration supplying what the caller left unset.
+     *
+     * @param spec the caller's wishes, which win wherever they are expressed
+     * @param image the image's entrypoint, cmd, env, user and working directory
+     * @return the spec, ready to attach to a container
+     */
+    static Any buildContainerSpec(ContainerSpec spec, ImageConfig image) {
         Struct.Builder root = Struct.newBuilder()
                 .putFields("ociVersion", stringValue(SPEC_VERSION))
-                .putFields("process", structValue(buildProcess(spec).build()))
+                .putFields("process", structValue(buildProcess(spec, image).build()))
                 .putFields("root", structValue(Struct.newBuilder()
                         .putFields("path", stringValue("rootfs"))
                         .putFields("readonly", boolValue(spec.readonlyRootfs()))
@@ -55,15 +71,40 @@ public final class OciSpecBuilder {
         return toAny(SPEC_TYPE_URL, root.build());
     }
 
-    /** Builds the process spec for exec as a typeurl Any (JSON payload). */
+    /** Builds the process spec for exec, with no environment inherited from the container. */
     public static Any buildExecSpec(List<String> command, Map<String, String> environment, String workingDir) {
-        Struct.Builder process = process(command, environment, workingDir, null, List.of());
+        return buildExecSpec(command, environment, workingDir, List.of(), null);
+    }
+
+    /**
+     * Builds the process spec for exec as a typeurl Any (JSON payload).
+     *
+     * @param command argv to run
+     * @param environment the caller's environment, which wins over the container's
+     * @param workingDir the caller's working directory, or {@code null} to use the container's
+     * @param containerEnv the environment the container's own process runs with, inherited here
+     *        the way {@code docker exec} does: a command run inside a container should see the
+     *        same environment the container does, or nothing that image ships is on its PATH
+     * @param containerWorkingDir the container's working directory, used when the caller sets none
+     * @return the process spec
+     */
+    static Any buildExecSpec(List<String> command, Map<String, String> environment, String workingDir,
+                             List<String> containerEnv, String containerWorkingDir) {
+        String cwd = workingDir != null ? workingDir : containerWorkingDir;
+        Struct.Builder process = process(command, environment, cwd, null, containerEnv, List.of());
         return toAny(PROCESS_TYPE_URL, process.build());
     }
 
-    private static Struct.Builder buildProcess(ContainerSpec spec) {
-        Struct.Builder process = process(spec.command(), spec.environment(), spec.workingDir(),
-                spec.user(), List.of("TERM=xterm"));
+    private static Struct.Builder buildProcess(ContainerSpec spec, ImageConfig image) {
+        // The caller wins wherever they expressed a wish; the image fills in the rest. A container
+        // built from an image that ships an entrypoint (most real images do) is unusable
+        // otherwise, because the caller would have to restate it, and its environment, by hand.
+        List<String> args = spec.command().isEmpty() ? image.defaultArgs() : spec.command();
+        String workingDir = spec.workingDir() != null ? spec.workingDir() : image.workingDir();
+        String user = spec.user() != null ? spec.user() : image.user();
+
+        Struct.Builder process = process(args, spec.environment(), workingDir, user,
+                image.env(), List.of("TERM=xterm"));
         process.putFields("rlimits", rlimitsValue());
         return process;
     }
@@ -71,17 +112,18 @@ public final class OciSpecBuilder {
     /**
      * The fields every OCI process spec carries, shared by the container's init process and by
      * exec, so the two cannot drift apart. {@code user} is {@code null} for exec (which always
-     * runs as uid 0); {@code extraEnv} is prepended after PATH and before the caller's environment.
+     * runs as uid 0).
+     *
+     * <p>Environment precedence, weakest first: this library's default PATH, {@code extraEnv},
+     * the image's environment, then the caller's. Later entries win, and duplicates are collapsed
+     * so a single value per key reaches the runtime — an image that sets its own PATH (a JDK
+     * image, say) must not be shadowed by ours, and the caller must be able to override both.
      */
     private static Struct.Builder process(List<String> command, Map<String, String> environment,
-                                          String workingDir, String user, List<String> extraEnv) {
+                                          String workingDir, String user, List<String> imageEnv,
+                                          List<String> extraEnv) {
         List<String> args = command == null || command.isEmpty() ? List.of("/bin/sh") : command;
-        List<String> env = new ArrayList<>();
-        env.add("PATH=" + DEFAULT_PATH);
-        env.addAll(extraEnv);
-        if (environment != null) {
-            environment.forEach((k, v) -> env.add(k + "=" + v));
-        }
+        List<String> env = mergeEnv(extraEnv, imageEnv, environment);
         return Struct.newBuilder()
                 .putFields("terminal", boolValue(false))
                 .putFields("user", structValue(parseUser(user)))
@@ -96,21 +138,45 @@ public final class OciSpecBuilder {
                 .putFields("capabilities", structValue(capabilitiesValue()));
     }
 
-    private static Struct parseUser(String user) {
-        Struct.Builder b = Struct.newBuilder().putFields("uid", numberValue(0)).putFields("gid", numberValue(0));
-        if (user != null && !user.isBlank()) {
-            if (user.contains(":")) {
-                String[] parts = user.split(":", 2);
-                try {
-                    b.putFields("uid", numberValue(Long.parseLong(parts[0])));
-                    b.putFields("gid", numberValue(Long.parseLong(parts[1])));
-                } catch (NumberFormatException e) {
-                    throw new IllegalArgumentException("user must be \"uid:gid\" or a username, got: " + user, e);
+    /** Collapses the environment layers into {@code KEY=VALUE} entries, last writer winning. */
+    private static List<String> mergeEnv(List<String> extraEnv, List<String> imageEnv,
+                                         Map<String, String> callerEnv) {
+        java.util.LinkedHashMap<String, String> merged = new java.util.LinkedHashMap<>();
+        merged.put("PATH", DEFAULT_PATH);
+        for (List<String> layer : List.of(extraEnv, imageEnv)) {
+            for (String entry : layer) {
+                int eq = entry.indexOf('=');
+                if (eq > 0) {
+                    merged.put(entry.substring(0, eq), entry.substring(eq + 1));
                 }
             }
-            // A bare username cannot be honoured: the OCI runtime spec's process.user carries
-            // uid/gid only, with no field for a name, so there is nothing to hand the runtime.
-            // The process runs as uid 0. Pass "uid:gid" to select a user.
+        }
+        if (callerEnv != null) {
+            merged.putAll(callerEnv);
+        }
+        List<String> env = new ArrayList<>(merged.size());
+        merged.forEach((k, v) -> env.add(k + "=" + v));
+        return env;
+    }
+
+    private static Struct parseUser(String user) {
+        Struct.Builder b = Struct.newBuilder().putFields("uid", numberValue(0)).putFields("gid", numberValue(0));
+        if (user == null || user.isBlank()) {
+            return b.build();
+        }
+        String[] parts = user.split(":", 2);
+        try {
+            b.putFields("uid", numberValue(Long.parseLong(parts[0].trim())));
+            b.putFields("gid", numberValue(parts.length > 1 ? Long.parseLong(parts[1].trim()) : 0));
+        } catch (NumberFormatException e) {
+            // A name cannot be honoured: the OCI runtime spec's process.user carries uid/gid only,
+            // with no field for a name, so there is nothing to hand the runtime. Resolving it
+            // would mean reading /etc/passwd out of a root filesystem that is not mounted yet.
+            // Warn rather than throw: this value often comes from the image, not the caller, and
+            // refusing would make such images unusable. Pass "uid[:gid]" to select a user.
+            log.warn("user \"{}\" is a name, which cannot be mapped to a uid; running as uid 0."
+                    + " Pass \"uid[:gid]\" on the ContainerSpec to run as that user", user);
+            return Struct.newBuilder().putFields("uid", numberValue(0)).putFields("gid", numberValue(0)).build();
         }
         return b.build();
     }

@@ -173,13 +173,23 @@ public final class TasksServiceImpl implements Tasks {
 
     /** Creates an exec process (OCI process spec + IO FIFO paths) inside a running task. */
     public void exec(String containerId, String execId, ExecSpec spec, IoManager.FifoSet fifos) {
+        exec(containerId, execId, spec, fifos, StoredSpec.EMPTY);
+    }
+
+    /**
+     * Creates an exec process, inheriting environment and working directory from the container's
+     * own stored spec so the command sees what the container sees.
+     */
+    void exec(String containerId, String execId, ExecSpec spec, IoManager.FifoSet fifos,
+              StoredSpec container) {
         var request = containerd.services.tasks.v1.ExecProcessRequest.newBuilder()
                 .setContainerId(containerId)
                 .setExecId(execId)
                 .setStdin(fifos.stdin().toString())
                 .setStdout(fifos.stdout().toString())
                 .setStderr(fifos.stderr().toString())
-                .setSpec(OciSpecBuilder.buildExecSpec(spec.command(), spec.environment(), spec.workingDir()))
+                .setSpec(OciSpecBuilder.buildExecSpec(spec.command(), spec.environment(), spec.workingDir(),
+                        container.env(), container.workingDir()))
                 .build();
         log.debug("exec create: containerId={} execId={}", containerId, execId);
         try {

@@ -4,6 +4,28 @@ All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). While the major version is 0, minor
 versions may carry breaking changes.
 
+## [Unreleased]
+
+### Added
+
+- `ContainerSpec.hostNetwork(true)` shares the host's network stack instead of giving the
+  container a private, unconfigured namespace. Containers previously had only `lo`, with no
+  routes and no DNS, so they could neither reach anything nor be reached; configuring a private
+  namespace needs CNI, which this library does not do.
+- The image's own configuration now shapes the container. Entrypoint, Cmd, Env, User and
+  WorkingDir were read from the image config blob but ignored, so any image that relies on them —
+  which is most real images — had to have all of it restated by the caller. The caller's spec
+  still wins wherever it expresses a wish.
+- An exec inherits the container's environment and working directory, the way `docker exec` does,
+  read back from the OCI spec containerd already stores on the container. Without it nothing the
+  image ships was on the exec's PATH.
+
+### Changed
+
+- A `User` that is a name rather than a uid now logs a warning and runs as uid 0, instead of
+  throwing. Images commonly declare a name, and refusing would make them unusable. Resolving one
+  would mean reading `/etc/passwd` from a filesystem that is not mounted yet.
+
 ## [0.2.0] — 2026-09-06
 
 First release with a licence and published javadoc. The bulk of this release is a full review of
