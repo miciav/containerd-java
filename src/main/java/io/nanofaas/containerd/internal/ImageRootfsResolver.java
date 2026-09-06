@@ -114,21 +114,38 @@ public final class ImageRootfsResolver {
         return items;
     }
 
+    /**
+     * Picks the manifest matching the host platform.
+     *
+     * <p>Fails when the index holds none. This used to fall back to the first entry, which is
+     * usually the amd64 one: on an arm64 host that produced a container whose every binary was
+     * the wrong architecture, and the only symptom was {@code exec format error} from the runtime,
+     * naming nothing and pointing at nothing. Refusing here says which platform was wanted and
+     * which the image actually offers.
+     */
     private static String pickPlatformManifest(com.google.protobuf.Struct index) {
         var manifests = index.getFieldsOrThrow("manifests").getListValue().getValuesList();
         if (manifests.isEmpty()) {
             throw new IllegalStateException("image index has no manifests");
         }
         var host = io.nanofaas.containerd.Platform.host();
+        List<String> offered = new ArrayList<>();
         for (var m : manifests) {
             var platform = m.getStructValue().getFieldsOrDefault("platform",
                     com.google.protobuf.Value.getDefaultInstance()).getStructValue();
-            if (platform.getFieldsOrDefault("os", com.google.protobuf.Value.getDefaultInstance()).getStringValue().equals(host.os())
-                    && platform.getFieldsOrDefault("architecture", com.google.protobuf.Value.getDefaultInstance()).getStringValue().equals(host.architecture())) {
+            String os = field(platform, "os");
+            String architecture = field(platform, "architecture");
+            if (os.equals(host.os()) && architecture.equals(host.architecture())) {
                 return m.getStructValue().getFieldsOrThrow(DIGEST).getStringValue();
             }
+            // "unknown/unknown" entries are attestation manifests, not runnable images; leaving
+            // them out of the message keeps it about what the caller could actually have asked for.
+            if (!os.isEmpty() && !"unknown".equals(os)) {
+                offered.add(os + "/" + architecture);
+            }
         }
-        return manifests.get(0).getStructValue().getFieldsOrThrow(DIGEST).getStringValue();
+        throw new IllegalStateException("image has no manifest for " + host.os() + "/"
+                + host.architecture() + "; it offers " + (offered.isEmpty() ? "no platform" : offered));
     }
 
     /** OCI manifests and configs are UTF-8 by specification, never the platform default. */

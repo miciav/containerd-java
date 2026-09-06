@@ -19,6 +19,11 @@ versions may carry breaking changes.
 - An exec inherits the container's environment and working directory, the way `docker exec` does,
   read back from the OCI spec containerd already stores on the container. Without it nothing the
   image ships was on the exec's PATH.
+- `Containers.logs(String)` returns what a container's init process wrote, captured when the
+  container is created with `ContainerSpec.logDirectory(Path)`. There was previously no way to
+  see a container's output at all: one that died on startup did so silently, and diagnosing it
+  meant leaving the library and re-running the image under `ctr`. stdout and stderr come back
+  interleaved, because containerd writes both to one destination and ignores a second.
 - `ContainerSpec.openFilesLimit(long)` sets RLIMIT_NOFILE, which was hard-coded to 1024 for every
   container. Servers that pool connections or memory-map many files need far more: Elasticsearch
   enforces a minimum of 65535 as a startup check, so SonarQube could not run at all.
@@ -35,6 +40,13 @@ versions may carry breaking changes.
   test that asserted nothing while its name promised it checked the epoll error message — it
   could not have: that message only appears when epoll is absent, which is when the suite cannot
   run at all.
+
+### Fixed
+
+- An image index without the host's platform no longer silently resolves to its first entry,
+  which is usually amd64. On an arm64 host that produced a container whose every binary was the
+  wrong architecture, reported by the runtime as nothing more than `exec format error`. It now
+  says which platform was wanted and which the image offers.
 
 ### Changed
 

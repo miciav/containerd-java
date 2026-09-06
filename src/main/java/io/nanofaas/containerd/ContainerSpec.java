@@ -1,5 +1,6 @@
 package io.nanofaas.containerd;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -42,6 +43,7 @@ public final class ContainerSpec {
     private final long memorySwapLimitBytes;
     private final long pidsLimit;
     private final long openFilesLimit;
+    private final Path logDirectory;
     private final Map<String, String> labels;
 
     private ContainerSpec(Builder b) {
@@ -62,6 +64,7 @@ public final class ContainerSpec {
         this.memorySwapLimitBytes = b.memorySwapLimitBytes;
         this.pidsLimit = b.pidsLimit;
         this.openFilesLimit = b.openFilesLimit;
+        this.logDirectory = b.logDirectory;
         this.labels = Map.copyOf(b.labels);
     }
 
@@ -105,6 +108,8 @@ public final class ContainerSpec {
     public long pidsLimit() { return pidsLimit; }
     /** {@return the RLIMIT_NOFILE the container's process runs with} */
     public long openFilesLimit() { return openFilesLimit; }
+    /** {@return where the task's output is written, or {@code null} when it is discarded} */
+    public Path logDirectory() { return logDirectory; }
     /** {@return the labels stored on the container alongside containerd's own} */
     public Map<String, String> labels() { return labels; }
 
@@ -132,6 +137,7 @@ public final class ContainerSpec {
         private long memorySwapLimitBytes;
         private long pidsLimit;
         private long openFilesLimit = DEFAULT_OPEN_FILES_LIMIT;
+        private Path logDirectory;
         private Map<String, String> labels = Map.of();
 
         /**
@@ -273,6 +279,25 @@ public final class ContainerSpec {
                 throw new IllegalArgumentException("openFilesLimit must be positive, got: " + openFilesLimit);
             }
             this.openFilesLimit = openFilesLimit;
+            return this;
+        }
+
+        /**
+         * Captures the task's output into this directory, as {@code <id>.log}.
+         *
+         * <p>containerd throws a task's output away unless told where to put it, and it has to be
+         * told before the task starts — there is no attaching to a container after the fact. Left
+         * unset, {@link io.nanofaas.containerd.spi.Containers#logs} has nothing to return and a
+         * container that dies on startup does so without saying why.
+         *
+         * <p>stdout and stderr land in the same file, interleaved: containerd sends both to a file
+         * destination and ignores a second one.
+         *
+         * @param logDirectory directory for the log files; created if it does not exist
+         * @return this builder
+         */
+        public Builder logDirectory(Path logDirectory) {
+            this.logDirectory = Objects.requireNonNull(logDirectory, "logDirectory");
             return this;
         }
         /**

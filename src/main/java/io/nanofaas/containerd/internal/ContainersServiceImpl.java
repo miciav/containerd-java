@@ -23,6 +23,14 @@ public final class ContainersServiceImpl implements Containers {
 
     private static final Logger log = LoggerFactory.getLogger(ContainersServiceImpl.class);
 
+    /**
+     * Where a container's captured output lives, kept as a label on the container itself. The path
+     * is decided at create time but needed again at task create and at every logs() call, and
+     * containerd is already storing metadata for this container — holding it here means the caller
+     * never has to hand it back, and it survives a client restart.
+     */
+    static final String LOG_LABEL = "io.nanofaas.containerd/log.path";
+
     /** Default grace period between SIGTERM and SIGKILL in {@link #stop(String)}. */
     static final java.time.Duration DEFAULT_STOP_TIMEOUT = java.time.Duration.ofSeconds(10);
 
@@ -78,6 +86,7 @@ public final class ContainersServiceImpl implements Containers {
                     // User labels first: the GC ref must win, because losing it would let
                     // containerd collect the snapshot out from under a live container.
                     .putAllLabels(spec.labels())
+                    .putAllLabels(logLabels(spec))
                     .putLabels("containerd.io/gc.ref.snapshot." + snapshotter, spec.id())
                     .build();
             var created = stub.create(containerd.services.containers.v1.CreateContainerRequest.newBuilder()
@@ -95,6 +104,23 @@ public final class ContainersServiceImpl implements Containers {
             }
             throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.CONTAINER);
         }
+    }
+
+    /**
+     * The log-path labels for a spec that asks for captured output, empty otherwise. Creating the
+     * directory here rather than at task start means a failure to do so is reported by create(),
+     * where the caller asked for it.
+     */
+    private static java.util.Map<String, String> logLabels(ContainerSpec spec) {
+        if (spec.logDirectory() == null) {
+            return java.util.Map.of();
+        }
+        try {
+            Files.createDirectories(spec.logDirectory());
+        } catch (IOException e) {
+            throw new ContainerdException("could not create the log directory " + spec.logDirectory(), e);
+        }
+        return java.util.Map.of(LOG_LABEL, spec.logDirectory().resolve(spec.id() + ".log").toString());
     }
 
     /**
@@ -157,6 +183,35 @@ public final class ContainersServiceImpl implements Containers {
         }
         return new ContainerStatus(container.getId(), container.getImage(), state, pid,
                 exitStatus, container.getSnapshotKey(), ProtoMapper.map(container).createdAt());
+    }
+
+    @Override
+    public String logs(String id) {
+        String path = containerOf(id).getLabelsMap().get(LOG_LABEL);
+        if (path == null) {
+            throw new ContainerdException("container " + id + " was not created with a log directory,"
+                    + " so containerd discarded its output. Set ContainerSpec.logDirectory(...) before"
+                    + " creating it: a task's destination cannot be chosen after it has started");
+        }
+        return readLog(Path.of(path));
+    }
+
+    /** Reads a log file, treating "not there yet" as empty: the shim creates it when it first writes. */
+    private static String readLog(Path path) {
+        try {
+            return Files.exists(path) ? Files.readString(path, StandardCharsets.UTF_8) : "";
+        } catch (IOException e) {
+            throw new ContainerdException("could not read the container log " + path, e);
+        }
+    }
+
+    private containerd.services.containers.v1.Container containerOf(String id) {
+        try {
+            return stub.get(containerd.services.containers.v1.GetContainerRequest.newBuilder()
+                    .setId(id).build()).getContainer();
+        } catch (StatusRuntimeException e) {
+            throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.CONTAINER);
+        }
     }
 
     @Override

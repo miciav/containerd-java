@@ -193,6 +193,10 @@ Snapshot removal is explicit (`RemoveOptions.removeSnapshot(true)`) and idempote
 - **No checkpoint/restore.**
 - **No `Tasks.Update`** (live resource-limit changes on a running task).
 - **No TTY/PTY support** — `exec`/task IO is FIFO-only, `terminal` is always `false`.
+- **Container output is one combined stream.** `Containers.logs(id)` returns stdout and stderr
+  interleaved, and only for containers created with `ContainerSpec.logDirectory(...)`: containerd
+  discards a task's output unless told where to send it before the task starts, and it writes both
+  streams to a single destination.
 - `exec` requires the container's task to already be `RUNNING`.
 - **`ContainerSpec.user` must be `"uid:gid"`** — a bare username cannot be honoured, because the
   OCI runtime spec's `process.user` carries uid/gid only and has no field for a name. A username

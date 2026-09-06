@@ -33,6 +33,26 @@ public interface Containers {
     List<Container> list();
 
     /**
+     * Returns what the container's init process has written so far, stdout and stderr interleaved
+     * as they were produced.
+     *
+     * <p>The two are not separable: given a file destination containerd writes both streams to it
+     * and ignores any second destination, so what comes back is one combined stream — the same
+     * thing {@code docker logs} shows by default.
+     *
+     * <p>Only works for containers created with
+     * {@link io.nanofaas.containerd.ContainerSpec.Builder#logDirectory}: containerd discards a
+     * task's output unless it is told where to send it, and that cannot be decided after the task
+     * has started.
+     *
+     * @param id container id
+     * @return the captured output, empty if the task has not written anything yet
+     * @throws io.nanofaas.containerd.ContainerdException if the container was created without a
+     *         log directory, or the file cannot be read
+     */
+    String logs(String id);
+
+    /**
      * Removes a container. Idempotent — a missing container is ignored. If a task is still running,
      * removal throws unless {@link RemoveOptions#force()} is set (which stops the task first).
      *

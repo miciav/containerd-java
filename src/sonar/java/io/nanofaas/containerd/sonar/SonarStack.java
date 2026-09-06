@@ -58,6 +58,8 @@ final class SonarStack implements AutoCloseable {
 
     private final ContainerdClient client;
     private final String runId = UUID.randomUUID().toString().substring(0, 8);
+    /** Where the containers' output is captured, so a failure to start can explain itself. */
+    private final Path logDirectory;
     /** Undone in reverse order, so the database outlives what depends on it. */
     private final Deque<Runnable> teardown = new ArrayDeque<>();
     private final HttpClient http = HttpClient.newBuilder()
@@ -67,6 +69,7 @@ final class SonarStack implements AutoCloseable {
 
     SonarStack(ContainerdClient client) {
         this.client = client;
+        this.logDirectory = Path.of(System.getProperty("java.io.tmpdir"), "containerd-java-sonar-logs");
     }
 
     /** Authenticates later reads. Only /api/system/status answers without this. */
@@ -104,6 +107,7 @@ final class SonarStack implements AutoCloseable {
         // No command: the image's entrypoint initialises the cluster and starts the server.
         create(ContainerSpec.builder().id(id).image(POSTGRES_IMAGE)
                 .hostNetwork(true)
+                .logDirectory(logDirectory)
                 .environment(Map.of(
                         "POSTGRES_DB", DB_NAME,
                         "POSTGRES_USER", DB_USER,
@@ -111,7 +115,12 @@ final class SonarStack implements AutoCloseable {
                 .build());
         client.containers().start(id);
 
-        awaitPostgres(id);
+        try {
+            awaitPostgres(id);
+        } catch (RuntimeException e) {
+            throw new IllegalStateException("postgres did not come up. Its output was:\n"
+                    + tail(id, 40), e);
+        }
         log.info("postgres is accepting connections");
     }
 
@@ -120,6 +129,7 @@ final class SonarStack implements AutoCloseable {
         log.info("starting sonarqube as {} (this takes a couple of minutes on first start)", id);
         create(ContainerSpec.builder().id(id).image(SONARQUBE_IMAGE)
                 .hostNetwork(true)
+                .logDirectory(logDirectory)
                 .user(SONARQUBE_USER)
                 // Elasticsearch enforces this as a bootstrap check and refuses to start below it.
                 // The library's default of 1024 leaves SonarQube dying at startup.
@@ -131,7 +141,14 @@ final class SonarStack implements AutoCloseable {
                 .build());
         client.containers().start(id);
 
-        awaitSonarQube();
+        try {
+            awaitSonarQube();
+        } catch (RuntimeException e) {
+            // The reason is in the container's own output. Reporting only the timeout is what made
+            // the first attempt at this take a rerun under ctr to discover a file-descriptor limit.
+            throw new IllegalStateException("sonarqube did not come up. Its output was:\n"
+                    + tail(id, 40), e);
+        }
         log.info("sonarqube is up at {}", sonarQubeUrl());
     }
 
@@ -216,6 +233,17 @@ final class SonarStack implements AutoCloseable {
             String current = id.find() ? id.group(1) : null;
             return current != null && !current.equals(previousAnalysisId);
         });
+    }
+
+    /** The last {@code lines} lines a container wrote, or a note saying why they are unavailable. */
+    private String tail(String id, int lines) {
+        try {
+            String[] all = client.containers().logs(id).split("\n");
+            int from = Math.max(0, all.length - lines);
+            return String.join("\n", java.util.Arrays.copyOfRange(all, from, all.length));
+        } catch (RuntimeException e) {
+            return "(could not read the container's log: " + e.getMessage() + ")";
+        }
     }
 
     private void create(ContainerSpec spec) {

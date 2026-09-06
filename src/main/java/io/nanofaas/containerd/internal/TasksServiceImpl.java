@@ -47,6 +47,20 @@ public final class TasksServiceImpl implements Tasks {
         var request = containerd.services.tasks.v1.CreateTaskRequest.newBuilder()
                 .setContainerId(containerId)
                 .addAllRootfs(mounts);
+        // A task writes nowhere unless told to. The shim understands file:// URIs and creates the
+        // file on first write, so nothing has to exist beforehand and nothing has to stay attached
+        // reading it, which a FIFO would have required for the life of the container.
+        //
+        // Both fields get the same URI, which is what ctr --log-uri does. Two different files does
+        // not work — containerd writes both streams to stdout's and ignores stderr's — and leaving
+        // stderr empty is worse than useless: the runc-v2 shim panics on a nil dereference in
+        // copyPipes (process/io.go) and the task fails to start with "ttrpc: closed", which says
+        // nothing about the cause.
+        String logPath = container.getLabelsMap().get(ContainersServiceImpl.LOG_LABEL);
+        if (logPath != null) {
+            String uri = "file://" + logPath;
+            request.setStdout(uri).setStderr(uri);
+        }
         if (runtimeBinaryName != null) {
             request.setOptions(TypeUrls.pack(containerd.runc.v1.Options.newBuilder()
                     .setBinaryName(runtimeBinaryName).build()));
