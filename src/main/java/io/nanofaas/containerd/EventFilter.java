@@ -20,17 +20,20 @@ public final class EventFilter {
      * Selects the given topics. Note that {@code EventFilter.topics()} with no argument does not
      * compile — it resolves against the instance getter {@link #topics()} — so the "every topic"
      * filter has its own factory: {@link #all()}.
+     *
+     * @param topics topics to receive, for example {@code /tasks/exit}
+     * @return a filter selecting those topics
      */
     public static EventFilter topics(String... topics) {
         return new EventFilter(Arrays.asList(topics));
     }
 
-    /** Every topic in the client's namespace. */
+    /** {@return a filter matching every topic in the client's namespace} */
     public static EventFilter all() {
         return new EventFilter(List.of());
     }
 
-    /** The selected topics; empty means all topics in the namespace. */
+    /** {@return the selected topics; empty means every topic in the namespace} */
     public List<String> topics() {
         return topics;
     }
@@ -41,6 +44,9 @@ public final class EventFilter {
      * the only one this containerd reliably applies on its own. Topic selection is done
      * client-side, because this containerd's fieldpath parser rejects multi-filter combinations
      * (and unquoted {@code /} values) and silently falls back to an unfiltered stream.
+     *
+     * @param namespace namespace to scope the stream to
+     * @return the fieldpath filters to send in SubscribeRequest
      */
     public List<String> toFieldpathFilters(String namespace) {
         return List.of("namespace==" + namespace);

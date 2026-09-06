@@ -18,6 +18,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+/** Container lifecycle on top of containerd's Containers, Tasks and Snapshots services. */
 public final class ContainersServiceImpl implements Containers {
 
     private static final Logger log = LoggerFactory.getLogger(ContainersServiceImpl.class);

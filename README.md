@@ -1,5 +1,8 @@
 # containerd-java
 
+[![build](https://github.com/miciav/containerd-java/actions/workflows/build.yml/badge.svg)](https://github.com/miciav/containerd-java/actions/workflows/build.yml)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
 A Java client library that talks **directly to containerd's native gRPC API** over a Unix
 Domain Socket — no `ctr`, no `nerdctl`, no Docker, no Kubernetes CRI, no sidecar daemon. Built
 for [NanoFaaS](https://github.com/), a lightweight Function-as-a-Service runtime, but usable
@@ -71,11 +74,16 @@ an `exec` inside a task is a `Process`. See [Conceptual glossary](#conceptual-gl
 ## Installation
 
 ```bash
-./gradlew build          # compiles, runs unit tests, produces build/libs/containerd-java-0.1.0-SNAPSHOT.jar
+./gradlew build          # compiles, runs unit tests, produces build/libs/containerd-java-0.2.0.jar
 ./gradlew publishToMavenLocal   # if you add the maven-publish plugin for local consumption
 ```
 
-Gradle coordinates (once published): `io.nanofaas:containerd-java:0.1.0-SNAPSHOT`.
+`build` also produces `-sources.jar` and `-javadoc.jar` alongside the main artifact.
+
+Gradle coordinates (once published): `io.nanofaas:containerd-java:0.2.0`.
+
+Changes between releases are listed in [CHANGELOG.md](CHANGELOG.md). Note that 0.2.0 carries
+breaking changes from 0.1.0.
 
 ## Basic usage
 
@@ -186,6 +194,9 @@ Snapshot removal is explicit (`RemoveOptions.removeSnapshot(true)`) and idempote
 - **No `Tasks.Update`** (live resource-limit changes on a running task).
 - **No TTY/PTY support** — `exec`/task IO is FIFO-only, `terminal` is always `false`.
 - `exec` requires the container's task to already be `RUNNING`.
+- **`ContainerSpec.user` must be `"uid:gid"`** — a bare username cannot be honoured, because the
+  OCI runtime spec's `process.user` carries uid/gid only and has no field for a name. A username
+  is ignored and the process runs as uid 0.
 - Event topic filtering is applied **client-side**: this containerd's server-side fieldpath
   filter rejects multi-clause combinations (see Design Notes, R25) and falls back to an
   unfiltered stream, so only the namespace scoping filter is sent to the server and topics are
@@ -195,7 +206,8 @@ Snapshot removal is explicit (`RemoveOptions.removeSnapshot(true)`) and idempote
 
 Integration tests are tagged `@Tag("integration")`, live under `src/integrationTest`, run
 against a **real** containerd (they pull `docker.io/library/alpine:latest`, so networking and
-registry access are required), and are **not** part of `./gradlew build`/`check`:
+registry access are required), and are **not** part of `./gradlew build`/`check`. CI runs them as a separate job against
+containerd 2.2.1 installed in the runner:
 
 ```bash
 sudo ./gradlew integrationTest
@@ -206,7 +218,9 @@ sudo ./gradlew integrationTest
 ```
 
 Each integration test class extends `ContainerdConnectionIT`, whose `@BeforeAll` uses JUnit
-`Assumptions` to **skip** (not fail) when the socket is missing or unreadable. Every test uses a
+`Assumptions` to **skip** (not fail) when the socket is missing or unreadable. Because that would
+let a CI job pass having run nothing, the workflow fails the build if any integration test skips
+or if none ran. Every test uses a
 unique id (`it-<name>-` + UUID) and cleans up its own containers/snapshots in `finally`/`@AfterEach`.
 
 ## Conceptual glossary
@@ -309,3 +323,21 @@ every place the verified containerd behavior diverged from the plan's initial co
   settling on server-side namespace scoping + client-side topic matching.
 
 See the plan file for the full list and the verification each finding is based on.
+
+## Documentation
+
+- [CHANGELOG.md](CHANGELOG.md) — what changed in each release.
+- [docs/spec.md](docs/spec.md) — the specification this implementation is written against.
+- Javadoc: `./gradlew javadoc`, then open `build/docs/javadoc/index.html`. It covers the public
+  API (`io.nanofaas.containerd` and its `spi` package); the `internal` package and the generated
+  protobuf stubs are deliberately excluded, since neither is API. The javadoc build is strict —
+  an undocumented public member or a missing `@param` fails it — so the published API stays
+  documented.
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE).
+
+The Protocol Buffers definitions under `src/main/proto/github.com/containerd/` are vendored
+verbatim from containerd v2.2.1 and remain copyright The containerd Authors, under the same
+licence. See [NOTICE](NOTICE).

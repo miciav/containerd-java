@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "io.nanofaas"
-version = "0.1.0-SNAPSHOT"
+version = "0.2.0"
 
 val containerdApiVersion = "v2.2.1" // pinned containerd API; bump together with vendored protos
 val grpcVersion = "1.73.0"
@@ -22,6 +22,30 @@ java {
         languageVersion.set(JavaLanguageVersion.of(21))
     }
     withSourcesJar()
+    withJavadocJar()
+}
+
+// Javadoc documents the published API only: io.nanofaas.containerd and its spi package.
+//
+// The generated protobuf/gRPC stubs are excluded because the spec keeps generated types out of
+// the public API, and they would bury the output under thousands of pages. The internal package
+// and the runnable example are excluded because neither is API — internals carry their reasoning
+// in ordinary comments, which is where it belongs for code nobody compiles against.
+//
+// What remains is checked strictly: Xdoclint:all fails the build on an undocumented public
+// member, a missing @param or @return, a broken link or malformed HTML. Since withJavadocJar()
+// puts this task on the assemble path, CI enforces it on every push.
+tasks.javadoc {
+    exclude("containerd/**", "runtimeoptions/**", "io/nanofaas/containerd/internal/**",
+            "io/nanofaas/containerd/example/**")
+    (options as StandardJavadocDocletOptions).apply {
+        addStringOption("Xdoclint:all", "-quiet")
+        addStringOption("Xmaxwarns", "10000")
+        // Without this the build passes on an undocumented public member: doclint reports it as
+        // a warning, and javadoc warnings are not failures. -Werror is what makes it a gate.
+        addBooleanOption("Werror", true)
+        links("https://docs.oracle.com/en/java/javase/21/docs/api/")
+    }
 }
 
 dependencies {

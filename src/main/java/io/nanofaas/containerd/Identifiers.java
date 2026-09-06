@@ -18,7 +18,13 @@ public final class Identifiers {
     private Identifiers() {
     }
 
-    /** Returns {@code id} if it is a valid containerd identifier, else throws. */
+    /**
+     * Checks an identifier against containerd's rule.
+     *
+     * @param id identifier to validate
+     * @return {@code id} unchanged when it is valid
+     * @throws IllegalArgumentException if it is null, empty, too long, or malformed
+     */
     public static String requireValid(String id) {
         if (id == null || id.length() > MAX_LENGTH || !IDENTIFIER.matcher(id).matches()) {
             throw new IllegalArgumentException("invalid containerd identifier: " + id);

@@ -1,0 +1,15 @@
+NanoFaaS containerd Java Client
+Copyright The NanoFaaS Authors
+
+This product includes software developed at the containerd project
+(https://github.com/containerd/containerd).
+
+The Protocol Buffers definitions under src/main/proto/github.com/containerd/
+are vendored verbatim from containerd v2.2.1 and remain:
+
+    Copyright The containerd Authors.
+    Licensed under the Apache License, Version 2.0
+
+Each vendored file carries its original copyright and license header. The
+generated gRPC stubs and protobuf message classes built from those files are
+derived works of them.

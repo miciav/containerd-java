@@ -10,6 +10,7 @@ import io.nanofaas.containerd.spi.Tasks;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/** The {@link io.nanofaas.containerd.spi.ContainerdClient} implementation: owns the channel and the service facades. */
 public final class DefaultContainerdClient implements ContainerdClient {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultContainerdClient.class);

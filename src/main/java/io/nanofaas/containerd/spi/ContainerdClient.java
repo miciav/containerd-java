@@ -10,60 +10,96 @@ import io.nanofaas.containerd.Version;
  */
 public interface ContainerdClient extends AutoCloseable {
 
-    /** Returns containerd's version and revision (doubles as a health check). */
+    /** {@return containerd's version and revision; doubles as a health check} */
     Version version();
 
-    /** Image operations: pull, get, list, remove. */
+    /** {@return the image operations facade: pull, get, list, remove} */
     Images images();
 
-    /** Container lifecycle: create, inspect, list, remove, start, stop, kill, wait, exec. */
+    /** {@return the container lifecycle facade: create, inspect, list, remove, start, stop, kill, wait, exec} */
     Containers containers();
 
-    /** Low-level task operations (NanoFaaS fast path). */
+    /** {@return the low-level task facade, the NanoFaaS fast path} */
     Tasks tasks();
 
-    /** containerd event stream (subscribe with filtering). */
+    /** {@return the event stream facade} */
     Events events();
 
+    /** {@return the containerd namespace every call through this client is scoped to} */
     String namespace();
 
+    /** {@return the snapshotter used for container root filesystems} */
     String snapshotter();
 
+    /** {@return the runtime identifier passed to tasks, e.g. {@code io.containerd.runc.v2}} */
     String runtimeName();
 
+    /**
+     * Releases the gRPC channel and every executor this client owns. Open event subscriptions
+     * are cancelled. The client cannot be used afterwards.
+     */
     @Override
     void close();
 
+    /** {@return a builder for a new client} */
     static Builder builder() {
         return new ContainerdClientBuilder();
     }
 
+    /** Configures and creates a {@link ContainerdClient}. */
     interface Builder {
 
-        /** Unix domain socket path. Default {@code /run/containerd/containerd.sock}. */
+        /**
+         * Sets the Unix domain socket to connect to.
+         *
+         * @param socketPath socket path; defaults to {@code /run/containerd/containerd.sock}
+         * @return this builder
+         */
         Builder socketPath(String socketPath);
 
-        /** containerd namespace. Default {@code nanofaas}. */
+        /**
+         * Sets the containerd namespace every call is scoped to.
+         *
+         * @param namespace namespace name; defaults to {@code nanofaas}
+         * @return this builder
+         */
         Builder namespace(String namespace);
 
-        /** Snapshotter used for container root filesystems. Default {@code overlayfs}. */
+        /**
+         * Sets the snapshotter for container root filesystems.
+         *
+         * @param snapshotter snapshotter name; defaults to {@code overlayfs}
+         * @return this builder
+         */
         Builder snapshotter(String snapshotter);
 
-        /** Runtime identifier passed to tasks. Default {@code io.containerd.runc.v2}. */
+        /**
+         * Sets the runtime identifier passed to tasks.
+         *
+         * @param runtimeName runtime id; defaults to {@code io.containerd.runc.v2}
+         * @return this builder
+         */
         Builder runtimeName(String runtimeName);
 
         /**
          * When set (e.g. {@code crun}), the runc-v2 shim is told to exec this OCI runtime binary
          * instead of its default. Requires a shim that supports the {@code binary_name} option.
+         *
+         * @param runtimeBinaryName OCI runtime binary, or {@code null} for the shim's default
+         * @return this builder
          */
         Builder runtimeBinaryName(String runtimeBinaryName);
 
         /**
          * How long {@link Containers#stop} waits after SIGTERM before sending SIGKILL.
          * Default 10 seconds.
+         *
+         * @param stopTimeout grace period; must be positive
+         * @return this builder
          */
         Builder stopTimeout(java.time.Duration stopTimeout);
 
+        /** {@return a client connected to the configured socket} */
         ContainerdClient build();
     }
 }

@@ -7,7 +7,16 @@ import java.util.Objects;
 /** Desired state of a container to create. Build with {@link #builder()}. */
 public final class ContainerSpec {
 
+    /**
+     * An extra mount added to the container on top of the standard set.
+     *
+     * @param destination path inside the container
+     * @param type filesystem type, for example {@code bind} or {@code tmpfs}
+     * @param source path on the host, or the filesystem name for virtual filesystems
+     * @param options mount options; {@code null} is treated as none
+     */
     public record MountSpec(String destination, String type, String source, List<String> options) {
+        /** Defensively copies the options, treating null as none. */
         public MountSpec {
             options = options == null ? List.of() : List.copyOf(options);
         }
@@ -49,28 +58,51 @@ public final class ContainerSpec {
         this.labels = Map.copyOf(b.labels);
     }
 
+    /** {@return a builder for a new container spec} */
     public static Builder builder() {
         return new Builder();
     }
 
+    /** {@return the container id} */
     public String id() { return id; }
+    /** {@return the image reference the root filesystem comes from} */
     public String image() { return image; }
+    /** {@return the argv of the init process; {@code /bin/sh} when empty} */
     public List<String> command() { return command; }
+    /** {@return the environment variables added on top of a default {@code PATH} and {@code TERM}} */
     public Map<String, String> environment() { return environment; }
+    /** {@return the working directory of the init process; {@code /} when unset} */
     public String workingDir() { return workingDir; }
+    /** {@return the hostname inside the container; the container id when unset} */
     public String hostname() { return hostname; }
+    /** {@return the user as {@code "uid:gid"}. A bare username cannot be honoured — the OCI
+     *         runtime spec has no field for one — and leaves the process running as uid 0} */
     public String user() { return user; }
+    /** {@return whether the root filesystem is mounted read-only} */
     public boolean readonlyRootfs() { return readonlyRootfs; }
+    /** {@return the extra mounts added on top of the standard set (/proc, /dev, /sys, ...)} */
     public List<MountSpec> mounts() { return mounts; }
+    /** {@return the relative CPU weight against other containers; 0 leaves it unset} */
     public long cpuShares() { return cpuShares; }
+    /** {@return the CFS quota, microseconds of CPU time per period; 0 leaves it unset} */
     public long cpuQuotaMicros() { return cpuQuotaMicros; }
+    /** {@return the CFS period the quota is measured over, in microseconds; 0 leaves it unset} */
     public long cpuPeriodMicros() { return cpuPeriodMicros; }
+    /** {@return the hard memory limit in bytes; 0 leaves it unset} */
     public long memoryLimitBytes() { return memoryLimitBytes; }
+    /** {@return the combined memory + swap limit in bytes; 0 leaves it unset} */
     public long memorySwapLimitBytes() { return memorySwapLimitBytes; }
+    /** {@return the maximum number of processes in the container; 0 leaves it unset} */
     public long pidsLimit() { return pidsLimit; }
+    /** {@return the labels stored on the container alongside containerd's own} */
     public Map<String, String> labels() { return labels; }
 
+    /** Collects the fields of a {@link ContainerSpec}. */
     public static final class Builder {
+
+        /** Creates an empty builder; prefer {@link ContainerSpec#builder()}. */
+        public Builder() {
+        }
         private String id;
         private String image;
         private List<String> command = List.of();
@@ -88,23 +120,126 @@ public final class ContainerSpec {
         private long pidsLimit;
         private Map<String, String> labels = Map.of();
 
+        /**
+         * Sets the container id.
+         *
+         * @param id container id; must satisfy {@link Identifiers}
+         * @return this builder
+         */
         public Builder id(String id) { this.id = id; return this; }
+        /**
+         * Sets the image reference the root filesystem comes from.
+         *
+         * @param image image reference the root filesystem comes from
+         * @return this builder
+         */
         public Builder image(String image) { this.image = image; return this; }
+        /**
+         * Sets the argv of the init process.
+         *
+         * @param command argv of the init process; {@code /bin/sh} when empty
+         * @return this builder
+         */
         public Builder command(List<String> command) { this.command = Objects.requireNonNull(command, "command"); return this; }
+        /**
+         * Sets the environment variables added on top of a default {@code PATH} and {@code TERM}.
+         *
+         * @param environment environment variables added on top of a default {@code PATH} and {@code TERM}
+         * @return this builder
+         */
         public Builder environment(Map<String, String> environment) { this.environment = Objects.requireNonNull(environment, "environment"); return this; }
+        /**
+         * Sets the working directory of the init process.
+         *
+         * @param workingDir working directory of the init process; {@code /} when unset
+         * @return this builder
+         */
         public Builder workingDir(String workingDir) { this.workingDir = workingDir; return this; }
+        /**
+         * Sets the hostname inside the container.
+         *
+         * @param hostname hostname inside the container; the container id when unset
+         * @return this builder
+         */
         public Builder hostname(String hostname) { this.hostname = hostname; return this; }
+        /**
+         * Sets the user as {@code "uid:gid"}.
+         *
+         * @param user user as {@code "uid:gid"}. A bare username cannot be honoured — the OCI
+     *         runtime spec has no field for one — and leaves the process running as uid 0
+         * @return this builder
+         */
         public Builder user(String user) { this.user = user; return this; }
+        /**
+         * Sets the whether the root filesystem is mounted read-only.
+         *
+         * @param readonlyRootfs whether the root filesystem is mounted read-only
+         * @return this builder
+         */
         public Builder readonlyRootfs(boolean readonlyRootfs) { this.readonlyRootfs = readonlyRootfs; return this; }
+        /**
+         * Sets the extra mounts added on top of the standard set (/proc, /dev, /sys, .
+         *
+         * @param mounts extra mounts added on top of the standard set (/proc, /dev, /sys, ...)
+         * @return this builder
+         */
         public Builder mounts(List<MountSpec> mounts) { this.mounts = Objects.requireNonNull(mounts, "mounts"); return this; }
+        /**
+         * Sets the relative CPU weight against other containers.
+         *
+         * @param cpuShares relative CPU weight against other containers; 0 leaves it unset
+         * @return this builder
+         */
         public Builder cpuShares(long cpuShares) { this.cpuShares = cpuShares; return this; }
+        /**
+         * Sets the CFS quota: microseconds of CPU time per period.
+         *
+         * @param cpuQuotaMicros CFS quota: microseconds of CPU time per period; 0 leaves it unset
+         * @return this builder
+         */
         public Builder cpuQuotaMicros(long cpuQuotaMicros) { this.cpuQuotaMicros = cpuQuotaMicros; return this; }
+        /**
+         * Sets the CFS period the quota is measured over, in microseconds.
+         *
+         * @param cpuPeriodMicros CFS period the quota is measured over, in microseconds; 0 leaves it unset
+         * @return this builder
+         */
         public Builder cpuPeriodMicros(long cpuPeriodMicros) { this.cpuPeriodMicros = cpuPeriodMicros; return this; }
+        /**
+         * Sets the hard memory limit in bytes.
+         *
+         * @param memoryLimitBytes hard memory limit in bytes; 0 leaves it unset
+         * @return this builder
+         */
         public Builder memoryLimitBytes(long memoryLimitBytes) { this.memoryLimitBytes = memoryLimitBytes; return this; }
+        /**
+         * Sets the combined memory + swap limit in bytes.
+         *
+         * @param memorySwapLimitBytes combined memory + swap limit in bytes; 0 leaves it unset
+         * @return this builder
+         */
         public Builder memorySwapLimitBytes(long memorySwapLimitBytes) { this.memorySwapLimitBytes = memorySwapLimitBytes; return this; }
+        /**
+         * Sets the maximum number of processes in the container.
+         *
+         * @param pidsLimit maximum number of processes in the container; 0 leaves it unset
+         * @return this builder
+         */
         public Builder pidsLimit(long pidsLimit) { this.pidsLimit = pidsLimit; return this; }
+        /**
+         * Sets the labels stored on the container alongside containerd's own.
+         *
+         * @param labels labels stored on the container alongside containerd's own
+         * @return this builder
+         */
         public Builder labels(Map<String, String> labels) { this.labels = Objects.requireNonNull(labels, "labels"); return this; }
 
+        /**
+         * Validates the collected fields and creates the spec.
+         *
+         * @return the container spec
+         * @throws IllegalArgumentException if the id or image is missing, or the id is invalid
+         */
         public ContainerSpec build() {
             if (id == null || id.isBlank()) {
                 throw new IllegalArgumentException("id is required");

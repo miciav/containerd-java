@@ -2,19 +2,31 @@ package io.nanofaas.containerd;
 
 import java.util.Locale;
 
-/** Operating system and architecture pair used to select images and platforms. */
+/**
+ * Operating system and architecture pair used to select images and platforms.
+ *
+ * @param os OCI operating system name, for example {@code linux}
+ * @param architecture OCI architecture name, for example {@code amd64} or {@code arm64}
+ */
 public record Platform(String os, String architecture) {
 
+    /** {@return the {@code linux/amd64} platform} */
     public static Platform linuxAmd64() {
         return new Platform("linux", "amd64");
     }
 
-    /** The platform of the host this JVM runs on (the default for pulls, like docker). */
+    /** {@return the platform of the host this JVM runs on, the default for pulls as in docker} */
     public static Platform host() {
         return fromOsArch(System.getProperty("os.name", ""), System.getProperty("os.arch", ""));
     }
 
-    /** Normalizes a JVM os.name/os.arch pair to OCI os/architecture values. */
+    /**
+     * Normalizes a JVM {@code os.name}/{@code os.arch} pair to OCI values.
+     *
+     * @param osName value of the {@code os.name} system property
+     * @param arch value of the {@code os.arch} system property
+     * @return the corresponding OCI platform
+     */
     public static Platform fromOsArch(String osName, String arch) {
         String os = osName.trim().toLowerCase(Locale.ROOT);
         String osNorm = os.startsWith("linux") ? "linux" : os.startsWith("mac") ? "darwin"

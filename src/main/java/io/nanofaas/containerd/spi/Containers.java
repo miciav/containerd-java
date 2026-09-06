@@ -10,20 +10,43 @@ import java.util.List;
  */
 public interface Containers {
 
+    /**
+     * Creates a container: prepares a snapshot from the image's root filesystem and stores the
+     * container metadata and OCI spec. Does not start anything; see {@link #start}.
+     *
+     * @param spec desired state of the container
+     * @return the container as containerd stored it
+     * @throws io.nanofaas.containerd.ContainerAlreadyExistsException if the id is taken
+     * @throws io.nanofaas.containerd.ImageNotFoundException if the image is not in the store
+     */
     Container create(ContainerSpec spec);
 
-    /** Combined view of the container metadata and its task state, if any. */
+    /**
+     * Combined view of the container metadata and its task state, if any.
+     *
+     * @param id container id
+     * @return the container's current status
+     */
     ContainerStatus inspect(String id);
 
+    /** {@return every container in the client's namespace} */
     List<Container> list();
 
     /**
      * Removes a container. Idempotent — a missing container is ignored. If a task is still running,
      * removal throws unless {@link RemoveOptions#force()} is set (which stops the task first).
+     *
+     * @param id container id
+     * @param options whether to remove the snapshot and whether to force
      */
     void remove(String id, RemoveOptions options);
 
-    /** Creates (if needed) and starts the container's task. Returns the init process pid. */
+    /**
+     * Creates (if needed) and starts the container's task.
+     *
+     * @param id container id
+     * @return pid of the init process
+     */
     int start(String id);
 
     /**
@@ -31,15 +54,44 @@ public interface Containers {
      * {@link ContainerdClient.Builder#stopTimeout stopTimeout} (10s by default), then SIGKILL,
      * then task delete.
      * Idempotent — a container with no task returns an empty {@link java.util.Optional}.
+     *
+     * @param id container id
+     * @return how the task exited, or empty if there was no task
      */
     java.util.Optional<ExitStatus> stop(String id);
 
+    /**
+     * Sends a signal to every process in the container's task, without waiting for it to exit.
+     *
+     * @param id container id
+     * @param signal signal to send
+     */
     void kill(String id, Signal signal);
 
-    /** Blocks until the container's init process exits. */
+    /**
+     * Blocks until the container's init process exits.
+     *
+     * @param id container id
+     * @return how it exited
+     */
     ExitStatus wait(String id);
 
+    /**
+     * Runs a command inside the running container and collects its output.
+     *
+     * @param id container id; its task must be RUNNING
+     * @param command argv of the process to run
+     * @return exit code and captured output
+     */
     ExecResult exec(String id, List<String> command);
 
+    /**
+     * Runs a command inside the running container, with control over environment, working
+     * directory and stdin.
+     *
+     * @param id container id; its task must be RUNNING
+     * @param spec what to run and how
+     * @return exit code and captured output
+     */
     ExecResult exec(String id, ExecSpec spec);
 }
