@@ -99,6 +99,19 @@ public interface ContainerdClient extends AutoCloseable {
          */
         Builder stopTimeout(java.time.Duration stopTimeout);
 
+        /**
+         * Attaches containers that ask for one to their network.
+         *
+         * <p>Left unset, {@link io.nanofaas.containerd.ContainerSpec.Builder#network} is refused
+         * at create time rather than ignored: a container that asked to be on a network and
+         * silently is not is worse than one that never started.
+         *
+         * @param network the networking implementation, for instance the CNI one from
+         *        {@code containerd-java-cni}
+         * @return this builder
+         */
+        Builder network(ContainerNetwork network);
+
         /** {@return a client connected to the configured socket} */
         ContainerdClient build();
     }

@@ -20,6 +20,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          path: containerd-java
+
+      # Built from source next door, which is how the CNI source set resolves it. GitHub cannot
+      # check out above the workspace, so both repositories are siblings inside it.
+      - uses: actions/checkout@v7
+        with:
+          repository: miciav/libcni-java
+          path: libcni-java
 
       - uses: actions/setup-java@v6
         with:
@@ -28,8 +37,11 @@ jobs:
 
       # Also validates the Gradle wrapper jar against the published checksums.
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          build-root-directory: containerd-java
 
       - name: Build and run unit tests
+        working-directory: containerd-java
         run: ./gradlew build --stacktrace
 
       - name: Upload test report
@@ -37,7 +49,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: unit-test-report
-          path: build/reports/tests/test
+          path: containerd-java/build/reports/tests/test
           retention-days: 7
 
   integration:
@@ -45,6 +57,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          path: containerd-java
+
+      # Built from source next door, which is how the CNI source set resolves it. GitHub cannot
+      # check out above the workspace, so both repositories are siblings inside it.
+      - uses: actions/checkout@v7
+        with:
+          repository: miciav/libcni-java
+          path: libcni-java
 
       # GraalVM rather than a plain JDK: it is a JDK 25 like any other for the integration tests,
       # and it also carries native-image, so one job covers both without installing containerd twice.
@@ -55,6 +76,8 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          build-root-directory: containerd-java
 
       # The runner ships containerd 1.7.x with Docker. This library targets the 2.x API and is
       # pinned to a specific version in build.gradle.kts, so install exactly that one rather
@@ -90,11 +113,13 @@ jobs:
           sudo chmod 666 /run/containerd/containerd.sock
 
       - name: Run integration tests
+        working-directory: containerd-java
         run: ./gradlew integrationTest --stacktrace
 
       # The integration tests skip themselves via JUnit Assumptions when containerd is not
       # reachable. Without this the job would go green having run nothing at all.
       - name: Fail if integration tests were skipped or did not run
+        working-directory: containerd-java
         run: |
           set -euo pipefail
           results=build/test-results/integrationTest
@@ -108,10 +133,43 @@ jobs:
       # The metadata this library ships is only correct if an image built from it actually runs.
       # Compiling proves nothing on its own: the first attempt here built cleanly and then died on
       # the first exec, because JNR generated its native stubs at runtime.
+      # CNI is a separate download and needs root to create bridges and move interfaces between
+      # namespaces, so these tests live in their own task rather than skipping inside the main one
+      # — a skip there is meant to mean something went wrong.
+      - name: Install CNI plugins and a bridge network
+        run: |
+          set -euo pipefail
+          version=v1.9.1
+          arch=$(dpkg --print-architecture)
+          curl -fsSL -o cni.tgz \
+            "https://github.com/containernetworking/plugins/releases/download/${version}/cni-plugins-linux-${arch}-${version}.tgz"
+          sudo mkdir -p /opt/cni/bin /etc/cni/net.d
+          sudo tar -xzf cni.tgz -C /opt/cni/bin
+          sudo tee /etc/cni/net.d/10-nanofaas.conflist > /dev/null <<'JSON'
+          {
+            "cniVersion": "1.0.0",
+            "name": "nanofaas-test",
+            "plugins": [
+              {"type": "bridge", "bridge": "cni-nanofaas0", "isGateway": true, "ipMasq": true,
+               "ipam": {"type": "host-local", "ranges": [[{"subnet": "10.99.0.0/16"}]],
+                        "routes": [{"dst": "0.0.0.0/0"}]}},
+              {"type": "firewall", "backend": "iptables"},
+              {"type": "loopback"}
+            ]
+          }
+          JSON
+
+      - name: Run the CNI networking tests
+        working-directory: containerd-java
+        # Root, and a Gradle home of its own so it does not take ownership of the runner user's.
+        run: sudo ./gradlew -g /tmp/gradle-root cniIntegrationTest --stacktrace
+
       - name: Build the example as a native image
+        working-directory: containerd-java
         run: ./gradlew nativeCompile --stacktrace
 
       - name: Run the native image against containerd
+        working-directory: containerd-java
         run: |
           set -euo pipefail
           binary=build/native/nativeCompile/containerd-java-example
@@ -127,5 +185,5 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: integration-test-report
-          path: build/reports/tests/integrationTest
+          path: containerd-java/build/reports/tests/integrationTest
           retention-days: 7

@@ -27,6 +27,8 @@ val assertjVersion = "3.27.3"
 val javaxAnnotationVersion = "1.3.2"
 
 repositories {
+    // libcni-java is consumed from the local repository until it is published anywhere else.
+    mavenLocal()
     mavenCentral()
 }
 
@@ -119,6 +121,27 @@ tasks.jacocoTestReport {
     }))
 }
 
+// ---- CNI networking (optional, published separately) ----
+// A source set rather than part of main: it pulls libcni-java and, through it, Gson, and this
+// library's core has no JSON dependency by design. Consumers who do not want CNI never see either.
+val cni = sourceSets.create("cni")
+
+cni.compileClasspath += sourceSets.main.get().output
+cni.runtimeClasspath += sourceSets.main.get().output
+
+dependencies {
+    "cniImplementation"("io.libcni:libcni-java:0.1.0")
+    "cniImplementation"("org.slf4j:slf4j-api:$slf4jVersion")
+}
+
+val cniJar = tasks.register<Jar>("cniJar") {
+    description = "The CNI networking implementation, as its own artifact"
+    group = "build"
+    archiveBaseName.set("containerd-java-cni")
+    from(cni.output)
+}
+tasks.named("assemble") { dependsOn(cniJar) }
+
 // ---- integration tests (require a real containerd; not part of `check`) ----
 val integrationTest = sourceSets.create("integrationTest")
 
@@ -128,6 +151,9 @@ configurations[integrationTest.runtimeOnlyConfigurationName].extendsFrom(configu
 // source set gets that wiring) — without this, integration tests cannot see the library classes
 integrationTest.compileClasspath += files(sourceSets.main.get().output)
 integrationTest.runtimeClasspath += files(sourceSets.main.get().output)
+// The CNI integration tests drive the optional module, so they need it and its dependencies.
+integrationTest.compileClasspath += sourceSets["cni"].output + configurations["cniRuntimeClasspath"]
+integrationTest.runtimeClasspath += sourceSets["cni"].output + configurations["cniRuntimeClasspath"]
 
 val integrationTestTask = tasks.register<Test>("integrationTest") {
     description = "Runs integration tests against a real containerd on /run/containerd/containerd.sock"
@@ -135,7 +161,22 @@ val integrationTestTask = tasks.register<Test>("integrationTest") {
     testClassesDirs = integrationTest.output.classesDirs
     classpath = integrationTest.runtimeClasspath
     useJUnitPlatform()
+    // The CNI tests need root and installed plugins, which the rest do not. Kept out so that a
+    // skip in this task still means something is wrong.
+    filter { excludeTestsMatching("*CniNetworkIT") }
     systemProperty("io.nanofaas.containerd.socket", System.getProperty("io.nanofaas.containerd.socket", "/run/containerd/containerd.sock"))
+    testLogging { events("failed", "skipped") }
+}
+
+tasks.register<Test>("cniIntegrationTest") {
+    description = "Runs the CNI networking tests; needs root and CNI plugins in /opt/cni/bin"
+    group = "verification"
+    testClassesDirs = integrationTest.output.classesDirs
+    classpath = integrationTest.runtimeClasspath
+    useJUnitPlatform()
+    filter { includeTestsMatching("*CniNetworkIT") }
+    systemProperty("io.nanofaas.containerd.socket",
+        System.getProperty("io.nanofaas.containerd.socket", "/run/containerd/containerd.sock"))
     testLogging { events("failed", "skipped") }
 }
 

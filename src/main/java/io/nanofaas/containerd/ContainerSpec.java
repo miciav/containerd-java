@@ -44,6 +44,7 @@ public final class ContainerSpec {
     private final long pidsLimit;
     private final long openFilesLimit;
     private final Path logDirectory;
+    private final String network;
     private final Map<String, String> labels;
 
     private ContainerSpec(Builder b) {
@@ -65,6 +66,7 @@ public final class ContainerSpec {
         this.pidsLimit = b.pidsLimit;
         this.openFilesLimit = b.openFilesLimit;
         this.logDirectory = b.logDirectory;
+        this.network = b.network;
         this.labels = Map.copyOf(b.labels);
     }
 
@@ -110,6 +112,8 @@ public final class ContainerSpec {
     public long openFilesLimit() { return openFilesLimit; }
     /** {@return where the task's output is written, or {@code null} when it is discarded} */
     public Path logDirectory() { return logDirectory; }
+    /** {@return the network to attach the container to, or {@code null} for no networking} */
+    public String network() { return network; }
     /** {@return the labels stored on the container alongside containerd's own} */
     public Map<String, String> labels() { return labels; }
 
@@ -138,6 +142,7 @@ public final class ContainerSpec {
         private long pidsLimit;
         private long openFilesLimit = DEFAULT_OPEN_FILES_LIMIT;
         private Path logDirectory;
+        private String network;
         private Map<String, String> labels = Map.of();
 
         /**
@@ -300,6 +305,23 @@ public final class ContainerSpec {
             this.logDirectory = Objects.requireNonNull(logDirectory, "logDirectory");
             return this;
         }
+
+        /**
+         * Attaches the container to this network once its task starts.
+         *
+         * <p>Requires the client to have been given a
+         * {@link io.nanofaas.containerd.spi.ContainerNetwork}; without one there is nothing to
+         * carry the name out to, and {@code create} says so rather than starting a container that
+         * silently has no network.
+         *
+         * @param network network name, as the networking implementation understands it — for CNI,
+         *        the {@code name} of a config in the plugin configuration directory
+         * @return this builder
+         */
+        public Builder network(String network) {
+            this.network = Objects.requireNonNull(network, "network");
+            return this;
+        }
         /**
          * Sets the labels stored on the container alongside containerd's own.
          *
@@ -321,6 +343,11 @@ public final class ContainerSpec {
             Identifiers.requireValid(id);
             if (image == null || image.isBlank()) {
                 throw new IllegalArgumentException("image is required");
+            }
+            if (network != null && hostNetwork) {
+                throw new IllegalArgumentException("hostNetwork and network are mutually exclusive:"
+                        + " a container sharing the host's network stack has no namespace of its own"
+                        + " for a network to be configured in");
             }
             return new ContainerSpec(this);
         }

@@ -4,6 +4,28 @@ All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). While the major version is 0, minor
 versions may carry breaking changes.
 
+## [Unreleased]
+
+### Added
+
+- **Container networking through CNI.** `ContainerSpec.network("mynet")` attaches a container to a
+  CNI network; `containerd-java-cni` provides the implementation, built on
+  [libcni-java](https://github.com/miciav/libcni-java). Until now the only way to give a container
+  a working network was `hostNetwork(true)`, which gives it the host's stack and no isolation.
+- `ContainerNetwork`, the interface the core knows networking by. It names no CNI type, so the CNI
+  implementation and its transitive Gson stay off the classpath of consumers who do not want them.
+
+### Notes
+
+- The lifecycle is the library's to get right, not the caller's. A container's network namespace is
+  its task's, existing only between the task starting and being torn down, so attaching happens
+  after start and detaching before teardown — including for a task that already exited, whose
+  address still has to be released. Nine tests assert the ordering of the calls, not merely that
+  they happened.
+- Asking for a network without giving the client a `ContainerNetwork` is refused at create time
+  rather than ignored: a container that asked to be on a network and silently is not is worse than
+  one that never started. `hostNetwork` and `network` are likewise mutually exclusive.
+
 ## [0.3.0] — 2026-09-06
 
 ### Breaking

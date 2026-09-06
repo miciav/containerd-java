@@ -337,6 +337,39 @@ collect when the lease expires rather than one that lives forever — an unrefer
 not collected on its own, which was verified rather than assumed. The lease is released as soon as
 the container's own GC reference takes over.
 
+## Networking
+
+By default a container gets a network namespace this library leaves empty: no addresses, no
+routes, nothing reachable. `hostNetwork(true)` shares the host's stack instead. For a real network
+of its own, `containerd-java-cni` runs CNI plugins:
+
+```java
+ContainerdClient client = ContainerdClient.builder()
+        .network(CniContainerNetwork.builder().build())   // /opt/cni/bin, /etc/cni/net.d
+        .build();
+
+client.containers().create(ContainerSpec.builder()
+        .id("fn-1").image("docker.io/library/alpine:latest")
+        .network("mynet")            // the "name" inside a .conflist, not its filename
+        .build());
+client.containers().start("fn-1");   // attached here, once the namespace exists
+client.containers().stop("fn-1");    // detached here, while it still does
+```
+
+It is a separate artifact on purpose: it pulls
+[libcni-java](https://github.com/miciav/libcni-java) and, through it, Gson, and the core has no
+JSON dependency by design. Consumers who do not want CNI never see either.
+
+The timing is the library's responsibility rather than the caller's, because it is easy to get
+wrong and expensive when you do: the namespace CNI configures is the task's, so it exists only
+between the task starting and being torn down. Detaching after the task has gone finds nothing to
+undo and leaves an address allocated on the host that nothing will reclaim.
+
+```bash
+# The CNI tests need root and installed plugins, so they have their own task.
+sudo ./gradlew cniIntegrationTest
+```
+
 ## GraalVM native image
 
 The library is usable from a GraalVM native image and ships the reachability metadata to make that

@@ -16,6 +16,7 @@ final class ContainerdClientBuilder implements ContainerdClient.Builder {
     private String runtimeName = "io.containerd.runc.v2";
     private String runtimeBinaryName;
     private java.time.Duration stopTimeout = java.time.Duration.ofSeconds(10);
+    private ContainerNetwork network;
 
     @Override
     public ContainerdClient.Builder socketPath(String socketPath) {
@@ -58,8 +59,14 @@ final class ContainerdClientBuilder implements ContainerdClient.Builder {
     }
 
     @Override
+    public ContainerdClient.Builder network(ContainerNetwork network) {
+        this.network = Objects.requireNonNull(network, "network");
+        return this;
+    }
+
+    @Override
     public ContainerdClient build() {
         return new DefaultContainerdClient(socketPath, namespace, snapshotter, runtimeName,
-                runtimeBinaryName, stopTimeout);
+                runtimeBinaryName, stopTimeout, network);
     }
 }

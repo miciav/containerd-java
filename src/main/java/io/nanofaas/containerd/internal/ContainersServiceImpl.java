@@ -31,6 +31,13 @@ public final class ContainersServiceImpl implements Containers {
      */
     static final String LOG_LABEL = "io.nanofaas.containerd/log.path";
 
+    /**
+     * The network a container was attached to, kept on the container itself. Detaching happens
+     * long after attaching, sometimes from a different process entirely, and asking the caller to
+     * remember would mean a crash in between leaks an address nobody can account for.
+     */
+    static final String NETWORK_LABEL = "io.nanofaas.containerd/cni.network";
+
     /** Default grace period between SIGTERM and SIGKILL in {@link #stop(String)}. */
     static final java.time.Duration DEFAULT_STOP_TIMEOUT = java.time.Duration.ofSeconds(10);
 
@@ -45,14 +52,22 @@ public final class ContainersServiceImpl implements Containers {
     private final String snapshotter;
     private final String runtimeName;
     private final java.time.Duration stopTimeout;
+    private final io.nanofaas.containerd.spi.ContainerNetwork network;
     private final ExecutorService ioExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     public ContainersServiceImpl(ManagedChannel channel, String snapshotter, String runtimeName, String runtimeBinaryName) {
-        this(channel, snapshotter, runtimeName, runtimeBinaryName, DEFAULT_STOP_TIMEOUT);
+        this(channel, snapshotter, runtimeName, runtimeBinaryName, DEFAULT_STOP_TIMEOUT, null);
     }
 
     public ContainersServiceImpl(ManagedChannel channel, String snapshotter, String runtimeName,
                                  String runtimeBinaryName, java.time.Duration stopTimeout) {
+        this(channel, snapshotter, runtimeName, runtimeBinaryName, stopTimeout, null);
+    }
+
+    public ContainersServiceImpl(ManagedChannel channel, String snapshotter, String runtimeName,
+                                 String runtimeBinaryName, java.time.Duration stopTimeout,
+                                 io.nanofaas.containerd.spi.ContainerNetwork network) {
+        this.network = network;
         this.stub = containerd.services.containers.v1.ContainersGrpc.newBlockingStub(channel);
         this.snapshots = new SnapshotManager(channel);
         this.leases = new LeaseManager(channel);
@@ -66,6 +81,12 @@ public final class ContainersServiceImpl implements Containers {
     @Override
     public Container create(ContainerSpec spec) {
         ProtoMapper.requireValidId(spec.id());
+        if (spec.network() != null && network == null) {
+            throw new ContainerdException("container " + spec.id() + " asks for network \""
+                    + spec.network() + "\" but this client has no ContainerNetwork. Build it with"
+                    + " .network(...) — starting the container without one would leave it silently"
+                    + " unreachable");
+        }
         log.debug("container create start: id={} image={}", spec.id(), spec.image());
 
         ImageRootfsResolver.ResolvedImage image;
@@ -103,6 +124,7 @@ public final class ContainersServiceImpl implements Containers {
                     // containerd collect the snapshot out from under a live container.
                     .putAllLabels(spec.labels())
                     .putAllLabels(logLabels(spec))
+                    .putAllLabels(networkLabels(spec))
                     .putLabels("containerd.io/gc.ref.snapshot." + snapshotter, spec.id())
                     .build();
             var containers = lease == null ? stub : stub.withInterceptors(lease.asHeader());
@@ -147,6 +169,11 @@ public final class ContainersServiceImpl implements Containers {
             throw new ContainerdException("could not create the log directory " + spec.logDirectory(), e);
         }
         return java.util.Map.of(LOG_LABEL, spec.logDirectory().resolve(spec.id() + ".log").toString());
+    }
+
+    /** The network label, so detach can find the network long after create decided it. */
+    private static java.util.Map<String, String> networkLabels(ContainerSpec spec) {
+        return spec.network() == null ? java.util.Map.of() : java.util.Map.of(NETWORK_LABEL, spec.network());
     }
 
     /**
@@ -271,6 +298,9 @@ public final class ContainersServiceImpl implements Containers {
             if (running) {
                 stop(id);
             } else {
+                // Already exited, so its namespace is gone; the address it held is not, and only
+                // the container id identifies it now.
+                detachNetwork(id, -1);
                 tasks.delete(id);
             }
         }
@@ -311,7 +341,9 @@ public final class ContainersServiceImpl implements Containers {
         }
         try {
             tasks.create(id);
-            return tasks.start(id);
+            int pid = tasks.start(id);
+            attachNetwork(id, pid);
+            return pid;
         } catch (RuntimeException e) {
             try {
                 if (tasks.exists(id)) {
@@ -329,12 +361,69 @@ public final class ContainersServiceImpl implements Containers {
         }
     }
 
+    /**
+     * Attaches the container's network, if it asked for one.
+     *
+     * <p>A failure here is a failed start: the caller asked for a container on a network and would
+     * otherwise be handed a running one that cannot reach anything. Detach runs first, because a
+     * plugin that failed part-way may already have taken an address.
+     */
+    private void attachNetwork(String id, int pid) {
+        String attachTo = networkOf(id);
+        if (attachTo == null) {
+            return;
+        }
+        try {
+            log.debug("attaching container {} to network {} (pid={})", id, attachTo, pid);
+            network.attach(id, attachTo, pid);
+        } catch (RuntimeException e) {
+            detachNetwork(id, pid);
+            throw new ContainerStartException("container " + id + " started but could not be attached"
+                    + " to network " + attachTo + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Detaches the container's network. Never throws: it runs on paths that are already tearing
+     * something down, and a failure here must not replace the reason they were running.
+     */
+    private void detachNetwork(String id, int pid) {
+        String detachFrom = networkOf(id);
+        if (detachFrom == null) {
+            return;
+        }
+        try {
+            log.debug("detaching container {} from network {} (pid={})", id, detachFrom, pid);
+            network.detach(id, detachFrom, pid);
+        } catch (RuntimeException e) {
+            log.warn("could not detach container {} from network {}; an address may be left"
+                    + " allocated on the host", id, detachFrom, e);
+        }
+    }
+
+    /** The network this container was created with, or null. Read from containerd, not remembered. */
+    private String networkOf(String id) {
+        if (network == null) {
+            return null;
+        }
+        try {
+            return containerOf(id).getLabelsMap().get(NETWORK_LABEL);
+        } catch (RuntimeException e) {
+            log.debug("could not read the network label for {}", id, e);
+            return null;
+        }
+    }
+
     @Override
     public Optional<ExitStatus> stop(String id) {
         if (!tasks.exists(id)) {
             log.debug("stop: no task for container {} (idempotent)", id);
             return Optional.empty();
         }
+        // Before anything is killed: the namespace CNI needs is the task's, and it goes when the
+        // task does. Detaching afterwards would find nothing to undo and leak the address.
+        detachNetwork(id, tasks.find(id).map(TaskInfo::pid).orElse(-1));
+
         ExitStatus status;
         try {
             status = terminate(id);
