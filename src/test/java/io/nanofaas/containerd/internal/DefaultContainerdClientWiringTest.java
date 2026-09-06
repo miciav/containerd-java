@@ -65,6 +65,8 @@ class DefaultContainerdClientWiringTest {
                                     }
                                 }),
                         new ServerInterceptor() {
+                            // gRPC's own type-parameter names, as in ServerInterceptor.
+                            @SuppressWarnings("java:S119")
                             @Override
                             public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
                                     ServerCall<ReqT, RespT> call,
@@ -150,6 +152,9 @@ class DefaultContainerdClientWiringTest {
                 .toList();
     }
 
+    // Polls for threads to be gone, which means sleeping between looks: there is no notification
+    // for "this thread has finally exited", only the absence of it in the next sample.
+    @SuppressWarnings("java:S2925")
     private static boolean awaitNoLiveNonDaemonThreads(String nameContains, Duration timeout)
             throws InterruptedException {
         long deadline = System.nanoTime() + timeout.toNanos();

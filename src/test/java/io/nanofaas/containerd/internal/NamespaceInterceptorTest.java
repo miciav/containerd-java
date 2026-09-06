@@ -29,6 +29,8 @@ class NamespaceInterceptorTest {
                     }
                 }),
                 new ServerInterceptor() {
+                    // gRPC's own type-parameter names, as in ServerInterceptor.
+                    @SuppressWarnings("java:S119")
                     @Override
                     public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(ServerCall<ReqT, RespT> call,
                                                                                  Metadata headers,

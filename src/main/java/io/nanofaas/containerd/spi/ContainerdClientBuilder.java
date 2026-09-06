@@ -7,6 +7,9 @@ import java.util.Objects;
 /** Package-private: callers reach this through {@link ContainerdClient#builder()}. */
 final class ContainerdClientBuilder implements ContainerdClient.Builder {
 
+    // containerd's documented default, and the whole point of this field is that socketPath()
+    // overrides it.
+    @SuppressWarnings("java:S1075")
     private String socketPath = "/run/containerd/containerd.sock";
     private String namespace = "nanofaas";
     private String snapshotter = "overlayfs";

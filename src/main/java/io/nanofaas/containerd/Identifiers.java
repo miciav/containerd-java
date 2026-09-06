@@ -13,6 +13,9 @@ import java.util.regex.Pattern;
 public final class Identifiers {
 
     private static final int MAX_LENGTH = 76;
+    // requireValid checks the length first and || short-circuits, so this never sees an input
+    // longer than MAX_LENGTH and cannot be driven into deep backtracking.
+    @SuppressWarnings("java:S5998")
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*");
 
     private Identifiers() {

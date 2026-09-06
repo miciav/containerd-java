@@ -103,6 +103,9 @@ class EventsServiceImplTest {
         }
     }
 
+    // Waits for something that must not happen: a reconnect that should not fire after close.
+    // There is no condition to poll for an absence; only time can tell you it stayed away.
+    @SuppressWarnings("java:S2925")
     @Test
     void closingTheServiceCancelsStreamsWithoutRejectingWorkOnCallbackThreads() throws Exception {
         try (var fake = new FakeEvents(); var jul = new JulCapture()) {

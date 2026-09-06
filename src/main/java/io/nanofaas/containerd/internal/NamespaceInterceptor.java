@@ -16,6 +16,9 @@ public final class NamespaceInterceptor implements ClientInterceptor {
         this.namespace = Objects.requireNonNull(namespace, "namespace");
     }
 
+    // ReqT/RespT are the names in gRPC's ClientInterceptor signature. Renaming them would make
+    // this override read differently from the interface it implements.
+    @SuppressWarnings("java:S119")
     @Override
     public <ReqT, RespT> ClientCall<ReqT, RespT> interceptCall(MethodDescriptor<ReqT, RespT> method,
                                                                CallOptions callOptions,

@@ -58,6 +58,8 @@ tasks.javadoc {
     }
 }
 
+// Grouped by subject rather than by configuration: each dependency sits with the comment
+// explaining why it has the scope it has, which regrouping would separate it from.
 dependencies {
     api("io.grpc:grpc-netty:$grpcVersion")
     api("io.grpc:grpc-protobuf:$grpcVersion")
@@ -139,6 +141,13 @@ sonar {
         // Vendored containerd protos and everything generated from them are not this project's code.
         property("sonar.exclusions", "**/build/generated/**,**/src/main/proto/**")
         property("sonar.junit.reportPaths", "build/test-results/test")
+        // Kotlin has no @SuppressWarnings for Sonar rules and the analyzer does not honour
+        // NOSONAR here, so this rule is turned off for the build file by name. The dependency
+        // block is grouped by subject, with each scope sitting next to the comment justifying it;
+        // regrouping by configuration would separate every dependency from its reasoning.
+        property("sonar.issue.ignore.multicriteria", "buildFileGrouping")
+        property("sonar.issue.ignore.multicriteria.buildFileGrouping.ruleKey", "kotlin:S6629")
+        property("sonar.issue.ignore.multicriteria.buildFileGrouping.resourceKey", "**/build.gradle.kts")
         property("sonar.coverage.jacoco.xmlReportPaths",
             layout.buildDirectory.file("reports/jacoco/test/jacocoTestReport.xml").get().asFile.path)
     }

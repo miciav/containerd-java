@@ -351,6 +351,12 @@ itself a consumer of the public API, so the analysis doubles as an end-to-end ex
 Ports 5432 and 9000 must be free: the containers share the host's network stack, because this
 library has no CNI and therefore no port mapping. The run checks both before starting anything.
 
+Findings judged not worth changing carry a `@SuppressWarnings("java:S…")` at the code they refer
+to, with the reason beside them, so the judgement travels with the code and survives the analysis
+stack being thrown away. One finding is deliberately left open — dependency verification metadata
+is a fair point about supply chain, not a false positive, and suppressing it would hide a real
+suggestion rather than address it.
+
 Coverage comes from JaCoCo (`build/reports/jacoco/test/`), which the analysis feeds to SonarQube;
 without it the server reports 0% no matter how many tests run.
 

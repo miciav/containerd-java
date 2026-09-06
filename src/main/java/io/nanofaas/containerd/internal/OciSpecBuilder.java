@@ -27,6 +27,9 @@ public final class OciSpecBuilder {
 
     static final String SPEC_VERSION = "1.2.0";
 
+    // Not a path this code opens: it is the PATH given to the container's process, the same
+    // default docker and ctr use.
+    @SuppressWarnings("java:S1075")
     private static final String DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
     private static final List<String> DEFAULT_CAPABILITIES = List.of(
             "CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FSETID", "CAP_FOWNER", "CAP_MKNOD", "CAP_NET_RAW",

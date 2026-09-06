@@ -11,6 +11,9 @@ public final class Example {
     private Example() {
     }
 
+    // System.out on purpose: this is the runnable example, and its output is what running it is
+    // for. A reader trying the library would write exactly this. The library itself uses SLF4J.
+    @SuppressWarnings("java:S106")
     public static void main(String[] args) {
         try (ContainerdClient client = ContainerdClient.builder()
                 .socketPath(System.getProperty("io.nanofaas.containerd.socket", "/run/containerd/containerd.sock"))
