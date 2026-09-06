@@ -19,6 +19,12 @@ versions may carry breaking changes.
 - An exec inherits the container's environment and working directory, the way `docker exec` does,
   read back from the OCI spec containerd already stores on the container. Without it nothing the
   image ships was on the exec's PATH.
+- `ContainerSpec.openFilesLimit(long)` sets RLIMIT_NOFILE, which was hard-coded to 1024 for every
+  container. Servers that pool connections or memory-map many files need far more: Elasticsearch
+  enforces a minimum of 65535 as a startup check, so SonarQube could not run at all.
+- `./gradlew sonarAnalysis` analyses this project with SonarQube, running the server and its
+  database as containers driven by this library. `-PsonarArgs=--keep` leaves the stack up for
+  browsing; `-PsonarArgs=--cleanup` removes what a kept run left behind.
 
 ### Changed
 

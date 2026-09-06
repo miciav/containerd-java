@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class OciSpecBuilderTest {
 
@@ -184,5 +185,33 @@ class OciSpecBuilderTest {
                 .contains("\"type\":\"ipc\"")
                 .contains("\"type\":\"uts\"")
                 .contains("\"type\":\"mount\"");
+    }
+
+    @Test
+    void theOpenFileLimitDefaultsToAThousandAndTwentyFour() {
+        String json = OciSpecBuilder.buildContainerSpec(
+                ContainerSpec.builder().id("c1").image("scratch").build())
+                .getValue().toStringUtf8();
+
+        assertThat(json).contains("\"type\":\"RLIMIT_NOFILE\"")
+                .contains("\"hard\":1024").contains("\"soft\":1024");
+    }
+
+    @Test
+    void theOpenFileLimitIsConfigurable() {
+        // Elasticsearch refuses to start below 65535, and the default of 1024 is what stopped
+        // SonarQube from coming up.
+        String json = OciSpecBuilder.buildContainerSpec(
+                ContainerSpec.builder().id("c1").image("scratch").openFilesLimit(65536).build())
+                .getValue().toStringUtf8();
+
+        assertThat(json).contains("\"hard\":65536").contains("\"soft\":65536")
+                .doesNotContain("1024");
+    }
+
+    @Test
+    void aNonPositiveOpenFileLimitIsRejected() {
+        assertThatThrownBy(() -> ContainerSpec.builder().id("c1").image("scratch").openFilesLimit(0))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("positive");
     }
 }

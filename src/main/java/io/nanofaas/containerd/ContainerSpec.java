@@ -7,6 +7,9 @@ import java.util.Objects;
 /** Desired state of a container to create. Build with {@link #builder()}. */
 public final class ContainerSpec {
 
+    /** RLIMIT_NOFILE applied when the caller sets none. */
+    public static final long DEFAULT_OPEN_FILES_LIMIT = 1024;
+
     /**
      * An extra mount added to the container on top of the standard set.
      *
@@ -38,6 +41,7 @@ public final class ContainerSpec {
     private final long memoryLimitBytes;
     private final long memorySwapLimitBytes;
     private final long pidsLimit;
+    private final long openFilesLimit;
     private final Map<String, String> labels;
 
     private ContainerSpec(Builder b) {
@@ -57,6 +61,7 @@ public final class ContainerSpec {
         this.memoryLimitBytes = b.memoryLimitBytes;
         this.memorySwapLimitBytes = b.memorySwapLimitBytes;
         this.pidsLimit = b.pidsLimit;
+        this.openFilesLimit = b.openFilesLimit;
         this.labels = Map.copyOf(b.labels);
     }
 
@@ -98,6 +103,8 @@ public final class ContainerSpec {
     public long memorySwapLimitBytes() { return memorySwapLimitBytes; }
     /** {@return the maximum number of processes in the container; 0 leaves it unset} */
     public long pidsLimit() { return pidsLimit; }
+    /** {@return the RLIMIT_NOFILE the container's process runs with} */
+    public long openFilesLimit() { return openFilesLimit; }
     /** {@return the labels stored on the container alongside containerd's own} */
     public Map<String, String> labels() { return labels; }
 
@@ -123,6 +130,7 @@ public final class ContainerSpec {
         private long memoryLimitBytes;
         private long memorySwapLimitBytes;
         private long pidsLimit;
+        private long openFilesLimit = DEFAULT_OPEN_FILES_LIMIT;
         private Map<String, String> labels = Map.of();
 
         /**
@@ -246,6 +254,26 @@ public final class ContainerSpec {
          * @return this builder
          */
         public Builder pidsLimit(long pidsLimit) { this.pidsLimit = pidsLimit; return this; }
+
+        /**
+         * Sets RLIMIT_NOFILE, the number of file descriptors the container's process may open.
+         *
+         * <p>The default of {@value #DEFAULT_OPEN_FILES_LIMIT} suits ordinary processes and is far
+         * too low for servers that pool connections or memory-map many files: Elasticsearch, for
+         * one, refuses to start below 65535 and says so only in output this library does not
+         * capture.
+         *
+         * @param openFilesLimit maximum open file descriptors, applied as both the soft and the
+         *        hard limit; must be positive
+         * @return this builder
+         */
+        public Builder openFilesLimit(long openFilesLimit) {
+            if (openFilesLimit <= 0) {
+                throw new IllegalArgumentException("openFilesLimit must be positive, got: " + openFilesLimit);
+            }
+            this.openFilesLimit = openFilesLimit;
+            return this;
+        }
         /**
          * Sets the labels stored on the container alongside containerd's own.
          *

@@ -105,7 +105,7 @@ public final class OciSpecBuilder {
 
         Struct.Builder process = process(args, spec.environment(), workingDir, user,
                 image.env(), List.of("TERM=xterm"));
-        process.putFields("rlimits", rlimitsValue());
+        process.putFields("rlimits", rlimitsValue(spec.openFilesLimit()));
         return process;
     }
 
@@ -268,12 +268,12 @@ public final class OciSpecBuilder {
         return caps.build();
     }
 
-    private static Value rlimitsValue() {
+    private static Value rlimitsValue(long openFiles) {
         // OCI runtime spec: rlimits is an array of {type, hard, soft} objects (specs-go PosixRlimit).
         Value nofile = Value.newBuilder().setStructValue(Struct.newBuilder()
                 .putFields("type", stringValue("RLIMIT_NOFILE"))
-                .putFields("hard", numberValue(1024))
-                .putFields("soft", numberValue(1024))
+                .putFields("hard", numberValue(openFiles))
+                .putFields("soft", numberValue(openFiles))
                 .build()).build();
         return listValue(List.of(nofile));
     }

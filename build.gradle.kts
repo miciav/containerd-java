@@ -2,6 +2,10 @@ plugins {
     `java-library`
     application
     id("com.google.protobuf") version "0.9.5"
+    // Analysis runs through this rather than the sonar-scanner-cli image: that image is published
+    // for amd64 only, so it cannot run on an arm64 host. The plugin also knows the source sets,
+    // the compiled classes and the test reports, which the CLI has to be told about by hand.
+    id("org.sonarqube") version "7.5.0.8588"
 }
 
 group = "io.nanofaas"
@@ -104,6 +108,44 @@ val integrationTestTask = tasks.register<Test>("integrationTest") {
 
 application {
     mainClass.set("io.nanofaas.containerd.example.Example")
+}
+
+// What to analyse. The server URL and the token come from the orchestrator at invocation time.
+sonar {
+    properties {
+        property("sonar.projectKey", "io.nanofaas:containerd-java")
+        property("sonar.projectName", "containerd-java")
+        // Vendored containerd protos and everything generated from them are not this project's code.
+        property("sonar.exclusions", "**/build/generated/**,**/src/main/proto/**")
+        property("sonar.junit.reportPaths", "build/test-results/test")
+    }
+}
+
+// ---- SonarQube analysis driven by this library (not part of the published artifact) ----
+// Its own source set so the orchestrator never reaches a consumer's classpath, the same reason
+// the example's SLF4J backend is kept off it.
+val sonar = sourceSets.create("sonar")
+
+// A custom source set inherits none of main's dependencies, so give it main's own runtime
+// classpath. Without it the epoll natives are missing and the channel factory fails with
+// NoClassDefFoundError on io.netty.channel.epoll.Epoll.
+sonar.compileClasspath += sourceSets.main.get().output + configurations["runtimeClasspath"]
+sonar.runtimeClasspath += sourceSets.main.get().output + configurations["runtimeClasspath"]
+
+dependencies {
+    "sonarRuntimeOnly"("org.slf4j:slf4j-simple:$slf4jVersion")
+}
+
+tasks.register<JavaExec>("sonarAnalysis") {
+    description = "Runs SonarQube in containers driven by this library, and analyses this project"
+    group = "verification"
+    mainClass.set("io.nanofaas.containerd.sonar.SonarAnalysis")
+    classpath = sonar.runtimeClasspath
+    // The scanner reads compiled classes and test results, so make sure they are there.
+    dependsOn(tasks.named("build"))
+    systemProperty("io.nanofaas.containerd.socket",
+        System.getProperty("io.nanofaas.containerd.socket", "/run/containerd/containerd.sock"))
+    args = (findProperty("sonarArgs") as String? ?: "").split(" ").filter { it.isNotBlank() }
 }
 
 // The runnable example gets an SLF4J backend on the `run` classpath only. Using `runtimeOnly`

@@ -324,6 +324,25 @@ every place the verified containerd behavior diverged from the plan's initial co
 
 See the plan file for the full list and the verification each finding is based on.
 
+## Static analysis
+
+`./gradlew sonarAnalysis` runs SonarQube over this project, with the server and its PostgreSQL
+database started as containers **through this library** — the orchestrator under `src/sonar` is
+itself a consumer of the public API, so the analysis doubles as an end-to-end exercise of it.
+
+```bash
+./gradlew sonarAnalysis                          # analyse, report, tear everything down
+./gradlew sonarAnalysis -PsonarArgs=--keep       # leave the stack up to browse the results
+./gradlew sonarAnalysis -PsonarArgs=--cleanup    # remove what a --keep run left behind
+```
+
+Ports 5432 and 9000 must be free: the containers share the host's network stack, because this
+library has no CNI and therefore no port mapping. The run checks both before starting anything.
+
+The analysis itself goes through the `org.sonarqube` Gradle plugin rather than a scanner
+container. The `sonar-scanner-cli` image is published for amd64 only and cannot run on arm64, and
+the plugin knows the source sets, compiled classes and test reports without being told.
+
 ## Documentation
 
 - [CHANGELOG.md](CHANGELOG.md) — what changed in each release.
