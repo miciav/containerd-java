@@ -328,6 +328,14 @@ every place the verified containerd behavior diverged from the plan's initial co
 
 See the plan file for the full list and the verification each finding is based on.
 
+## Snapshot ownership
+
+A container's snapshot is prepared before the container record that will own it exists. That gap
+is held by a containerd lease, so a process killed inside it leaves a snapshot containerd will
+collect when the lease expires rather than one that lives forever — an unreferenced snapshot is
+not collected on its own, which was verified rather than assumed. The lease is released as soon as
+the container's own GC reference takes over.
+
 ## Static analysis
 
 `./gradlew sonarAnalysis` runs SonarQube over this project, with the server and its PostgreSQL

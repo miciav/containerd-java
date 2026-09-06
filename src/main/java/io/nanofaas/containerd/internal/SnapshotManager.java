@@ -24,8 +24,24 @@ public final class SnapshotManager {
 
     /** Prepares an active snapshot keyed by {@code key}, parented on {@code parent} (may be empty). */
     public List<containerd.types.Mount> prepare(String snapshotter, String key, String parent) {
-        log.debug("snapshot prepare: snapshotter={} key={} parent={}", snapshotter, key, parent);
-        var response = stub.prepare(containerd.services.snapshots.v1.PrepareSnapshotRequest.newBuilder()
+        return prepare(snapshotter, key, parent, null);
+    }
+
+    /**
+     * Prepares a snapshot, optionally owned by a lease until something else references it.
+     *
+     * @param snapshotter the snapshotter to prepare in
+     * @param key the snapshot key
+     * @param parent parent chain id, empty for a scratch image
+     * @param lease an interceptor carrying the lease header, or null for no lease
+     * @return the mounts for the prepared snapshot
+     */
+    List<containerd.types.Mount> prepare(String snapshotter, String key, String parent,
+                                         io.grpc.ClientInterceptor lease) {
+        log.debug("snapshot prepare: snapshotter={} key={} parent={} leased={}",
+                snapshotter, key, parent, lease != null);
+        var leased = lease == null ? stub : stub.withInterceptors(lease);
+        var response = leased.prepare(containerd.services.snapshots.v1.PrepareSnapshotRequest.newBuilder()
                 .setSnapshotter(snapshotter)
                 .setKey(key)
                 .setParent(parent)

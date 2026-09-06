@@ -41,6 +41,14 @@ versions may carry breaking changes.
   could not have: that message only appears when epoll is absent, which is when the suite cannot
   run at all.
 
+- Container creation holds a containerd lease across the window where a snapshot exists but the
+  container that will own it does not. Verified to matter: an unreferenced snapshot survives a
+  synchronous garbage collection indefinitely, while one held by a lease is collected as soon as
+  the lease goes — so a process killed mid-create now leaves something containerd will clean up
+  within the lease's 24 hours instead of a snapshot nobody can account for. The lease is released
+  as soon as the container references the snapshot itself, and a containerd that refuses to issue
+  one is not treated as an error: the create proceeds unleased rather than failing.
+
 ### Fixed
 
 - Container creation now releases the prepared snapshot on any failure, not only on a gRPC one.

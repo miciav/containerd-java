@@ -39,6 +39,7 @@ public final class ContainersServiceImpl implements Containers {
 
     private final containerd.services.containers.v1.ContainersGrpc.ContainersBlockingStub stub;
     private final SnapshotManager snapshots;
+    private final LeaseManager leases;
     private final ImageRootfsResolver rootfsResolver;
     private final TasksServiceImpl tasks;
     private final String snapshotter;
@@ -54,6 +55,7 @@ public final class ContainersServiceImpl implements Containers {
                                  String runtimeBinaryName, java.time.Duration stopTimeout) {
         this.stub = containerd.services.containers.v1.ContainersGrpc.newBlockingStub(channel);
         this.snapshots = new SnapshotManager(channel);
+        this.leases = new LeaseManager(channel);
         this.rootfsResolver = new ImageRootfsResolver(channel);
         this.tasks = new TasksServiceImpl(channel, runtimeBinaryName);
         this.snapshotter = snapshotter;
@@ -72,15 +74,29 @@ public final class ContainersServiceImpl implements Containers {
         } catch (StatusRuntimeException e) {
             throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.IMAGE);
         }
-        prepareSnapshotOrThrow(spec.id(), image.chainId());
+        // The snapshot is prepared before the container that will own it exists. A lease owns it
+        // in between, so a process killed in that window leaves something containerd will collect
+        // when the lease expires rather than a snapshot nobody can account for.
+        LeaseManager.Lease lease = leases.create("containerd-java-create-" + spec.id());
+        try {
+            prepareSnapshotOrThrow(spec.id(), image.chainId(), lease);
+            return createContainer(spec, image.config(), lease);
+        } finally {
+            // Released as soon as the container references the snapshot itself; on the failure
+            // path the snapshot is already gone and the lease has nothing left to hold.
+            leases.release(lease);
+        }
+    }
 
+    private Container createContainer(ContainerSpec spec, ImageConfig imageConfig,
+                                      LeaseManager.Lease lease) {
         try {
             var container = containerd.services.containers.v1.Container.newBuilder()
                     .setId(spec.id())
                     .setImage(spec.image())
                     .setSnapshotter(snapshotter)
                     .setSnapshotKey(spec.id())
-                    .setSpec(OciSpecBuilder.buildContainerSpec(spec, image.config()))
+                    .setSpec(OciSpecBuilder.buildContainerSpec(spec, imageConfig))
                     .setRuntime(containerd.services.containers.v1.Container.Runtime.newBuilder()
                             .setName(runtimeName))
                     // User labels first: the GC ref must win, because losing it would let
@@ -89,7 +105,8 @@ public final class ContainersServiceImpl implements Containers {
                     .putAllLabels(logLabels(spec))
                     .putLabels("containerd.io/gc.ref.snapshot." + snapshotter, spec.id())
                     .build();
-            var created = stub.create(containerd.services.containers.v1.CreateContainerRequest.newBuilder()
+            var containers = lease == null ? stub : stub.withInterceptors(lease.asHeader());
+            var created = containers.create(containerd.services.containers.v1.CreateContainerRequest.newBuilder()
                     .setContainer(container).build()).getContainer();
             log.debug("container create complete: id={}", spec.id());
             return ProtoMapper.map(created);
@@ -137,9 +154,10 @@ public final class ContainersServiceImpl implements Containers {
      * container exists this is a duplicate create; if it does not, a stale snapshot from a
      * previous partial create is removed and prepare is retried once.
      */
-    private void prepareSnapshotOrThrow(String id, String parentChainId) {
+    private void prepareSnapshotOrThrow(String id, String parentChainId, LeaseManager.Lease lease) {
+        io.grpc.ClientInterceptor header = lease == null ? null : lease.asHeader();
         try {
-            snapshots.prepare(snapshotter, id, parentChainId);
+            snapshots.prepare(snapshotter, id, parentChainId, header);
         } catch (StatusRuntimeException e) {
             if (e.getStatus().getCode() != io.grpc.Status.Code.ALREADY_EXISTS) {
                 throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.SNAPSHOT);
@@ -150,7 +168,7 @@ public final class ContainersServiceImpl implements Containers {
             log.warn("removing stale snapshot {} (no container with that id) and retrying prepare", id);
             try {
                 snapshots.remove(snapshotter, id);
-                snapshots.prepare(snapshotter, id, parentChainId);
+                snapshots.prepare(snapshotter, id, parentChainId, header);
             } catch (StatusRuntimeException retryFailure) {
                 throw StatusExceptionMapper.map(retryFailure, StatusExceptionMapper.ResourceKind.SNAPSHOT);
             }
