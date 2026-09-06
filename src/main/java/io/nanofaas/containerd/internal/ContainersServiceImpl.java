@@ -93,16 +93,25 @@ public final class ContainersServiceImpl implements Containers {
                     .setContainer(container).build()).getContainer();
             log.debug("container create complete: id={}", spec.id());
             return ProtoMapper.map(created);
-        } catch (StatusRuntimeException e) {
+        } catch (RuntimeException e) {
+            // Every failure after prepare, not just a gRPC one. The snapshot exists and nothing
+            // references it yet, so anything that stops the container from being created leaves it
+            // owned by no one and never collected — the stale snapshot that prepareSnapshotOrThrow
+            // has to work around above. Catching only StatusRuntimeException left that hole open
+            // for every other failure: a spec this code cannot build, a log directory it cannot
+            // create, anything thrown between the two calls.
             try {
                 snapshots.remove(snapshotter, spec.id());
-            } catch (StatusRuntimeException cleanupFailure) {
+            } catch (RuntimeException cleanupFailure) {
                 log.warn("failed to clean up snapshot {} after container create failure", spec.id(), cleanupFailure);
             }
-            if (e.getStatus().getCode() == io.grpc.Status.Code.ALREADY_EXISTS) {
-                throw new ContainerAlreadyExistsException("container " + spec.id() + " already exists", e);
+            if (e instanceof StatusRuntimeException status) {
+                if (status.getStatus().getCode() == io.grpc.Status.Code.ALREADY_EXISTS) {
+                    throw new ContainerAlreadyExistsException("container " + spec.id() + " already exists", status);
+                }
+                throw StatusExceptionMapper.map(status, StatusExceptionMapper.ResourceKind.CONTAINER);
             }
-            throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.CONTAINER);
+            throw e;
         }
     }
 

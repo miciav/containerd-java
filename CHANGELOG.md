@@ -43,6 +43,10 @@ versions may carry breaking changes.
 
 ### Fixed
 
+- Container creation now releases the prepared snapshot on any failure, not only on a gRPC one.
+  The snapshot is prepared before the container exists, so anything failing in between left it
+  owned by nothing and never collected — the stale snapshot the create path already had to work
+  around.
 - An image index without the host's platform no longer silently resolves to its first entry,
   which is usually amd64. On an arm64 host that produced a container whose every binary was the
   wrong architecture, reported by the runtime as nothing more than `exec format error`. It now

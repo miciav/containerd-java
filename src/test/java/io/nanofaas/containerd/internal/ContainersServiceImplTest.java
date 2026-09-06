@@ -1,6 +1,7 @@
 package io.nanofaas.containerd.internal;
 
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.stub.StreamObserver;
@@ -182,6 +183,31 @@ class ContainersServiceImplTest {
                     .isInstanceOf(ContainerAlreadyExistsException.class);
             assertThat(fake.snapshotsPrepared.get()).isEqualTo(1);
             assertThat(fake.snapshotsRemoved.get()).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void aFailureThatIsNotAGrpcStatusStillReleasesTheSnapshot() throws Exception {
+        // The snapshot is prepared before the container is created, so anything that fails in
+        // between leaves it owned by nothing and never collected. Only gRPC failures used to be
+        // cleaned up, which left every other kind of failure leaking one.
+        try (var fake = new FakeServer()) {
+            // A log directory that cannot be created: its parent is a regular file. This fails
+            // inside create(), after prepare, and throws something that is not a status.
+            java.nio.file.Path file = java.nio.file.Files.createTempFile("not-a-directory", "");
+            var containers = service(fake);
+            var spec = ContainerSpec.builder().id("test-1").image("scratch:latest")
+                    .logDirectory(file.resolve("logs"))
+                    .build();
+
+            assertThatThrownBy(() -> containers.create(spec))
+                    .isInstanceOf(io.nanofaas.containerd.ContainerdException.class)
+                    .isNotInstanceOf(StatusRuntimeException.class);
+
+            assertThat(fake.snapshotsPrepared.get()).isEqualTo(1);
+            assertThat(fake.snapshotsRemoved.get())
+                    .as("the prepared snapshot must not be left behind")
+                    .isEqualTo(1);
         }
     }
 }
