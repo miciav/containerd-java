@@ -161,4 +161,28 @@ class OciSpecBuilderTest {
         assertThat(containerSpec).contains("\"noNewPrivileges\":false");
         assertThat(execSpec).contains("\"noNewPrivileges\":false");
     }
+
+    @Test
+    void containersGetTheirOwnNetworkNamespaceByDefault() {
+        String json = OciSpecBuilder.buildContainerSpec(
+                ContainerSpec.builder().id("c1").image("scratch").build())
+                .getValue().toStringUtf8();
+
+        assertThat(json).contains("\"type\":\"network\"");
+    }
+
+    @Test
+    void hostNetworkOmitsTheNetworkNamespaceAndKeepsTheOthers() {
+        // The OCI spec has no "use the host's network" switch: a namespace is requested by being
+        // listed, so sharing the host's means leaving it out.
+        String json = OciSpecBuilder.buildContainerSpec(
+                ContainerSpec.builder().id("c1").image("scratch").hostNetwork(true).build())
+                .getValue().toStringUtf8();
+
+        assertThat(json).doesNotContain("\"type\":\"network\"");
+        assertThat(json).contains("\"type\":\"pid\"")
+                .contains("\"type\":\"ipc\"")
+                .contains("\"type\":\"uts\"")
+                .contains("\"type\":\"mount\"");
+    }
 }

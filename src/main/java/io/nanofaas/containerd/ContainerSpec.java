@@ -30,6 +30,7 @@ public final class ContainerSpec {
     private final String hostname;
     private final String user;
     private final boolean readonlyRootfs;
+    private final boolean hostNetwork;
     private final List<MountSpec> mounts;
     private final long cpuShares;
     private final long cpuQuotaMicros;
@@ -48,6 +49,7 @@ public final class ContainerSpec {
         this.hostname = b.hostname;
         this.user = b.user;
         this.readonlyRootfs = b.readonlyRootfs;
+        this.hostNetwork = b.hostNetwork;
         this.mounts = List.copyOf(b.mounts);
         this.cpuShares = b.cpuShares;
         this.cpuQuotaMicros = b.cpuQuotaMicros;
@@ -80,6 +82,8 @@ public final class ContainerSpec {
     public String user() { return user; }
     /** {@return whether the root filesystem is mounted read-only} */
     public boolean readonlyRootfs() { return readonlyRootfs; }
+    /** {@return whether the container shares the host's network stack instead of getting its own} */
+    public boolean hostNetwork() { return hostNetwork; }
     /** {@return the extra mounts added on top of the standard set (/proc, /dev, /sys, ...)} */
     public List<MountSpec> mounts() { return mounts; }
     /** {@return the relative CPU weight against other containers; 0 leaves it unset} */
@@ -111,6 +115,7 @@ public final class ContainerSpec {
         private String hostname;
         private String user;
         private boolean readonlyRootfs;
+        private boolean hostNetwork;
         private List<MountSpec> mounts = List.of();
         private long cpuShares;
         private long cpuQuotaMicros;
@@ -177,6 +182,21 @@ public final class ContainerSpec {
          * @return this builder
          */
         public Builder readonlyRootfs(boolean readonlyRootfs) { this.readonlyRootfs = readonlyRootfs; return this; }
+
+        /**
+         * Shares the host's network stack with the container instead of giving it a private one.
+         *
+         * <p>By default a container gets a fresh network namespace, which this library leaves
+         * empty: no addresses, no routes, no DNS, and nothing reachable from outside. Configuring
+         * one needs CNI, which this library does not do. Host networking is the way to run a
+         * container that has to reach the network or be reached on a port, at the cost of no
+         * network isolation — the container binds host ports directly, and can conflict with
+         * anything already listening.
+         *
+         * @param hostNetwork true to drop the network namespace and use the host's
+         * @return this builder
+         */
+        public Builder hostNetwork(boolean hostNetwork) { this.hostNetwork = hostNetwork; return this; }
         /**
          * Sets the extra mounts added on top of the standard set (/proc, /dev, /sys, .
          *

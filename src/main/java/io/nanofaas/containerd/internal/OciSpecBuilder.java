@@ -29,6 +29,8 @@ public final class OciSpecBuilder {
             "CAP_SETGID", "CAP_SETUID", "CAP_SETFCAP", "CAP_SETPCAP", "CAP_NET_BIND_SERVICE",
             "CAP_SYS_CHROOT", "CAP_KILL", "CAP_AUDIT_WRITE");
     private static final List<String> DEFAULT_NAMESPACES = List.of("pid", "network", "ipc", "uts", "mount");
+    /** The namespace to drop for host networking: without it the container keeps the host's stack. */
+    private static final String NETWORK_NAMESPACE = "network";
     private static final List<String> DEFAULT_MASKED_PATHS = List.of(
             "/proc/acpi", "/proc/asound", "/proc/kcore", "/proc/keys", "/proc/latency_stats",
             "/proc/timer_list", "/proc/timer_stats", "/proc/sched_debug", "/sys/firmware", "/proc/scsi");
@@ -143,6 +145,11 @@ public final class OciSpecBuilder {
     private static Struct.Builder buildLinux(ContainerSpec spec) {
         List<Value> namespaces = new ArrayList<>();
         for (String ns : DEFAULT_NAMESPACES) {
+            // An OCI spec asks for a namespace by listing it; omitting it inherits the host's.
+            // There is no "host" value to set — leaving it out is the mechanism.
+            if (spec.hostNetwork() && NETWORK_NAMESPACE.equals(ns)) {
+                continue;
+            }
             namespaces.add(Value.newBuilder().setStructValue(Struct.newBuilder()
                     .putFields("type", stringValue(ns))
                     .build()).build());
