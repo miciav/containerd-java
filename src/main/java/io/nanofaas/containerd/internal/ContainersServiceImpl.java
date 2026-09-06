@@ -252,32 +252,61 @@ public final class ContainersServiceImpl implements Containers {
             log.debug("stop: no task for container {} (idempotent)", id);
             return Optional.empty();
         }
+        ExitStatus status;
         try {
-            try {
-                tasks.kill(id, Signal.TERM);
-            } catch (TaskNotFoundException e) {
-                return Optional.empty();
-            }
-            try {
-                return Optional.of(tasks.wait(id, stopTimeout));
-            } catch (TaskNotFoundException e) {
-                return Optional.empty();
-            } catch (StatusRuntimeException e) {
-                if (e.getStatus().getCode() == io.grpc.Status.Code.DEADLINE_EXCEEDED) {
-                    log.debug("stop: container {} did not exit in time, sending SIGKILL", id);
-                    tasks.kill(id, Signal.KILL);
-                    return Optional.of(tasks.wait(id));
-                }
-                throw e;
-            } finally {
-                try {
-                    tasks.delete(id);
-                } catch (TaskNotFoundException e) {
-                    // already gone
-                }
-            }
+            status = terminate(id);
+        } catch (TaskNotFoundException e) {
+            // the task exited and was reaped while we were stopping it
+            deleteTaskQuietly(id);
+            return Optional.empty();
+        } catch (ContainerStopException e) {
+            throw e;
         } catch (RuntimeException e) {
+            // The task is still alive, or the RPC failed. Deleting now would fail on a live task
+            // and, from a finally block, would replace this exception with that failure.
             throw new ContainerStopException("failed to stop container " + id + ": " + e.getMessage(), e);
+        }
+        deleteTaskQuietly(id);
+        return Optional.of(status);
+    }
+
+    /**
+     * SIGTERM, wait for the grace period, then SIGKILL and wait again.
+     *
+     * <p>Both waits are bounded. SIGKILL cannot be caught, but it does not reach a process parked
+     * in uninterruptible sleep — a wedged NFS or fuse mount is the usual cause — and such a task
+     * never reaps. An unbounded wait there blocks the caller for the life of the process, so the
+     * second grace period is spent and then the stop is reported as failed.
+     */
+    private ExitStatus terminate(String id) {
+        tasks.kill(id, Signal.TERM);
+        try {
+            return tasks.wait(id, stopTimeout);
+        } catch (StatusRuntimeException e) {
+            if (e.getStatus().getCode() != io.grpc.Status.Code.DEADLINE_EXCEEDED) {
+                throw e;
+            }
+        }
+        log.debug("stop: container {} did not exit within {}, sending SIGKILL", id, stopTimeout);
+        tasks.kill(id, Signal.KILL);
+        try {
+            return tasks.wait(id, stopTimeout);
+        } catch (StatusRuntimeException e) {
+            if (e.getStatus().getCode() != io.grpc.Status.Code.DEADLINE_EXCEEDED) {
+                throw e;
+            }
+            throw new ContainerStopException("container " + id + " did not exit within " + stopTimeout
+                    + " of SIGKILL; the task is most likely stuck in uninterruptible sleep."
+                    + " Its state is left intact for inspection", e);
+        }
+    }
+
+    /** Deletes the (now exited) task. A task already reaped by containerd is not an error. */
+    private void deleteTaskQuietly(String id) {
+        try {
+            tasks.delete(id);
+        } catch (TaskNotFoundException e) {
+            // already gone
         }
     }
 
