@@ -166,6 +166,14 @@ jobs:
         # Root, and a Gradle home of its own so it does not take ownership of the runner user's.
         run: sudo ./gradlew -g /tmp/gradle-root cniIntegrationTest --stacktrace
 
+      # Root still writes its test results and generated sources into build/, and every later step
+      # runs as the runner user, which then cannot even delete them. Always, so that a failing CNI
+      # run does not also take the report upload down with it.
+      - name: Give the build directory back to the runner user
+        if: always()
+        working-directory: containerd-java
+        run: sudo chown -R "$(id -u):$(id -g)" build .gradle
+
       - name: Build the example as a native image
         working-directory: containerd-java
         run: ./gradlew nativeCompile --stacktrace
