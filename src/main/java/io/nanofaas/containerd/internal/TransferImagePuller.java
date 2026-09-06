@@ -1,6 +1,5 @@
 package io.nanofaas.containerd.internal;
 
-import com.google.protobuf.Any;
 import io.grpc.ManagedChannel;
 import io.grpc.StatusRuntimeException;
 import io.nanofaas.containerd.ImagePullException;
@@ -42,12 +41,8 @@ public final class TransferImagePuller {
                 .build();
 
         var request = containerd.services.transfer.v1.TransferRequest.newBuilder()
-                .setSource(Any.newBuilder()
-                        .setTypeUrl(source.getDescriptorForType().getFullName())
-                        .setValue(source.toByteString()))
-                .setDestination(Any.newBuilder()
-                        .setTypeUrl(destination.getDescriptorForType().getFullName())
-                        .setValue(destination.toByteString()))
+                .setSource(TypeUrls.pack(source))
+                .setDestination(TypeUrls.pack(destination))
                 .build();
 
         try {

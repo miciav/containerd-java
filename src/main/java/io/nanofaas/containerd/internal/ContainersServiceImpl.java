@@ -22,29 +22,34 @@ public final class ContainersServiceImpl implements Containers {
 
     private static final Logger log = LoggerFactory.getLogger(ContainersServiceImpl.class);
 
-    /** Grace period between SIGTERM and SIGKILL in {@link #stop(String)}. */
-    static final java.time.Duration STOP_TIMEOUT = java.time.Duration.ofSeconds(10);
+    /** Default grace period between SIGTERM and SIGKILL in {@link #stop(String)}. */
+    static final java.time.Duration DEFAULT_STOP_TIMEOUT = java.time.Duration.ofSeconds(10);
 
     /** How long {@link #close()} waits for in-flight exec IO before abandoning it. */
     static final java.time.Duration IO_SHUTDOWN_TIMEOUT = java.time.Duration.ofSeconds(5);
 
-    private final ManagedChannel channel;
     private final containerd.services.containers.v1.ContainersGrpc.ContainersBlockingStub stub;
     private final SnapshotManager snapshots;
     private final ImageRootfsResolver rootfsResolver;
     private final TasksServiceImpl tasks;
     private final String snapshotter;
     private final String runtimeName;
+    private final java.time.Duration stopTimeout;
     private final ExecutorService ioExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     public ContainersServiceImpl(ManagedChannel channel, String snapshotter, String runtimeName, String runtimeBinaryName) {
-        this.channel = channel;
+        this(channel, snapshotter, runtimeName, runtimeBinaryName, DEFAULT_STOP_TIMEOUT);
+    }
+
+    public ContainersServiceImpl(ManagedChannel channel, String snapshotter, String runtimeName,
+                                 String runtimeBinaryName, java.time.Duration stopTimeout) {
         this.stub = containerd.services.containers.v1.ContainersGrpc.newBlockingStub(channel);
         this.snapshots = new SnapshotManager(channel);
         this.rootfsResolver = new ImageRootfsResolver(channel);
         this.tasks = new TasksServiceImpl(channel, runtimeBinaryName);
         this.snapshotter = snapshotter;
         this.runtimeName = runtimeName;
+        this.stopTimeout = stopTimeout;
     }
 
     @Override
@@ -146,7 +151,7 @@ public final class ContainersServiceImpl implements Containers {
             state = task.get().state();
             pid = task.get().pid();
             if (state == ContainerState.STOPPED) {
-                exitStatus = new ExitStatus(task.get().exitCode(), null);
+                exitStatus = new ExitStatus(task.get().exitCode(), task.get().exitedAt());
             }
         }
         return new ContainerStatus(container.getId(), container.getImage(), state, pid,
@@ -254,7 +259,7 @@ public final class ContainersServiceImpl implements Containers {
                 return Optional.empty();
             }
             try {
-                return Optional.of(tasks.wait(id, STOP_TIMEOUT));
+                return Optional.of(tasks.wait(id, stopTimeout));
             } catch (TaskNotFoundException e) {
                 return Optional.empty();
             } catch (StatusRuntimeException e) {

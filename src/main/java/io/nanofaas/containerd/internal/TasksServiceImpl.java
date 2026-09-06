@@ -48,10 +48,8 @@ public final class TasksServiceImpl implements Tasks {
                 .setContainerId(containerId)
                 .addAllRootfs(mounts);
         if (runtimeBinaryName != null) {
-            var options = containerd.runc.v1.Options.newBuilder().setBinaryName(runtimeBinaryName).build();
-            request.setOptions(com.google.protobuf.Any.newBuilder()
-                    .setTypeUrl(options.getDescriptorForType().getFullName())
-                    .setValue(options.toByteString()));
+            request.setOptions(TypeUrls.pack(containerd.runc.v1.Options.newBuilder()
+                    .setBinaryName(runtimeBinaryName).build()));
         }
         try {
             stub.create(request.build());
@@ -165,7 +163,12 @@ public final class TasksServiceImpl implements Tasks {
 
     private static TaskInfo toTaskInfo(containerd.v1.types.Process process) {
         return new TaskInfo(process.getContainerId(), process.getPid(),
-                ProtoMapper.mapStatus(process.getStatus().getNumber()), process.getExitStatus());
+                ProtoMapper.mapStatus(process.getStatus()), process.getExitStatus(),
+                process.hasExitedAt() ? instant(process.getExitedAt()) : null);
+    }
+
+    private static Instant instant(com.google.protobuf.Timestamp timestamp) {
+        return Instant.ofEpochSecond(timestamp.getSeconds(), timestamp.getNanos());
     }
 
     /** Creates an exec process (OCI process spec + IO FIFO paths) inside a running task. */
@@ -222,7 +225,6 @@ public final class TasksServiceImpl implements Tasks {
     /** Maps an exit response to {@link ExitStatus}, preserving sub-second precision (nanos). */
     private static ExitStatus toExitStatus(int exitStatus, boolean hasExitedAt,
                                            com.google.protobuf.Timestamp exitedAt) {
-        return new ExitStatus(exitStatus,
-                hasExitedAt ? Instant.ofEpochSecond(exitedAt.getSeconds(), exitedAt.getNanos()) : null);
+        return new ExitStatus(exitStatus, hasExitedAt ? instant(exitedAt) : null);
     }
 }

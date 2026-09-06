@@ -1,9 +1,8 @@
 package io.nanofaas.containerd;
 
-import io.nanofaas.containerd.internal.ProtoMapper;
-
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /** Desired state of a container to create. Build with {@link #builder()}. */
 public final class ContainerSpec {
@@ -91,26 +90,26 @@ public final class ContainerSpec {
 
         public Builder id(String id) { this.id = id; return this; }
         public Builder image(String image) { this.image = image; return this; }
-        public Builder command(List<String> command) { this.command = command; return this; }
-        public Builder environment(Map<String, String> environment) { this.environment = environment; return this; }
+        public Builder command(List<String> command) { this.command = Objects.requireNonNull(command, "command"); return this; }
+        public Builder environment(Map<String, String> environment) { this.environment = Objects.requireNonNull(environment, "environment"); return this; }
         public Builder workingDir(String workingDir) { this.workingDir = workingDir; return this; }
         public Builder hostname(String hostname) { this.hostname = hostname; return this; }
         public Builder user(String user) { this.user = user; return this; }
         public Builder readonlyRootfs(boolean readonlyRootfs) { this.readonlyRootfs = readonlyRootfs; return this; }
-        public Builder mounts(List<MountSpec> mounts) { this.mounts = mounts; return this; }
+        public Builder mounts(List<MountSpec> mounts) { this.mounts = Objects.requireNonNull(mounts, "mounts"); return this; }
         public Builder cpuShares(long cpuShares) { this.cpuShares = cpuShares; return this; }
         public Builder cpuQuotaMicros(long cpuQuotaMicros) { this.cpuQuotaMicros = cpuQuotaMicros; return this; }
         public Builder cpuPeriodMicros(long cpuPeriodMicros) { this.cpuPeriodMicros = cpuPeriodMicros; return this; }
         public Builder memoryLimitBytes(long memoryLimitBytes) { this.memoryLimitBytes = memoryLimitBytes; return this; }
         public Builder memorySwapLimitBytes(long memorySwapLimitBytes) { this.memorySwapLimitBytes = memorySwapLimitBytes; return this; }
         public Builder pidsLimit(long pidsLimit) { this.pidsLimit = pidsLimit; return this; }
-        public Builder labels(Map<String, String> labels) { this.labels = labels; return this; }
+        public Builder labels(Map<String, String> labels) { this.labels = Objects.requireNonNull(labels, "labels"); return this; }
 
         public ContainerSpec build() {
             if (id == null || id.isBlank()) {
                 throw new IllegalArgumentException("id is required");
             }
-            ProtoMapper.requireValidId(id);
+            Identifiers.requireValid(id);
             if (image == null || image.isBlank()) {
                 throw new IllegalArgumentException("image is required");
             }
