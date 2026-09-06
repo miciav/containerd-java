@@ -160,12 +160,11 @@ class LeaseHeaderTest {
             new ContainersServiceImpl(fake.channel, "overlayfs", "io.containerd.runc.v2", null)
                     .create(ContainerSpec.builder().id("leased-1").image("scratch:latest").build());
 
-            assertThat(fake.spy.leaseByMethod.get("Prepare"))
-                    .as("the snapshot is what the lease exists to hold")
-                    .isEqualTo("containerd-java-create-leased-1");
-            assertThat(fake.spy.leaseByMethod.get("Create"))
-                    .as("the container too, so the two are torn down together if abandoned")
-                    .isEqualTo("containerd-java-create-leased-1");
+            assertThat(fake.spy.leaseByMethod)
+                    .as("the snapshot is what the lease exists to hold, and the container with it,"
+                            + " so the two are torn down together if abandoned")
+                    .containsEntry("Prepare", "containerd-java-create-leased-1")
+                    .containsEntry("Create", "containerd-java-create-leased-1");
         }
     }
 

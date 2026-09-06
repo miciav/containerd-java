@@ -50,8 +50,12 @@ final class LeaseManager {
             var lease = stub.create(containerd.services.leases.v1.CreateRequest.newBuilder()
                     .setId(id)
                     .build()).getLease();
-            log.debug("lease created: id={} expires={}", lease.getId(),
-                    lease.getLabelsMap().get("containerd.io/gc.expire"));
+            if (log.isDebugEnabled()) {
+                // The label lookup is a method call, not a value: without the guard it runs on
+                // every create whether or not anything is listening.
+                log.debug("lease created: id={} expires={}", lease.getId(),
+                        lease.getLabelsMap().get("containerd.io/gc.expire"));
+            }
             return new Lease(lease.getId());
         } catch (StatusRuntimeException e) {
             log.warn("could not create a lease ({}); proceeding without one, so a snapshot"
