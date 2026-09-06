@@ -85,8 +85,8 @@ public final class IoManager {
     }
 
     private static void cleanupQuietly(Path dir) {
-        try {
-            Files.list(dir).forEach(p -> {
+        try (var entries = Files.list(dir)) { // the stream holds a directory handle
+            entries.forEach(p -> {
                 try {
                     Files.deleteIfExists(p);
                 } catch (IOException ignored) {

@@ -40,6 +40,22 @@ class StatusExceptionMapperTest {
     }
 
     @Test
+    void messageCarriesContainerdsOwnDescription() {
+        // The status description is where containerd explains itself; a bare code says nothing
+        // the exception type does not already.
+        var e = Status.NOT_FOUND.withDescription("container does not exist").asRuntimeException();
+        assertThat(StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.CONTAINER))
+                .hasMessageContaining("container does not exist")
+                .hasMessageContaining("NOT_FOUND");
+    }
+
+    @Test
+    void messageOmitsTheSeparatorWhenThereIsNoDescription() {
+        assertThat(StatusExceptionMapper.map(sre(Status.Code.INTERNAL), StatusExceptionMapper.ResourceKind.TASK))
+                .hasMessage("containerd task operation failed: INTERNAL");
+    }
+
+    @Test
     void unmappedCodesFallBackToContainerdException() {
         assertThat(StatusExceptionMapper.map(sre(Status.Code.INTERNAL), StatusExceptionMapper.ResourceKind.GENERAL))
                 .isInstanceOf(ContainerdException.class);

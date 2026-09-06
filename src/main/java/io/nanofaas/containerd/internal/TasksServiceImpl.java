@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 public final class TasksServiceImpl implements Tasks {
 
@@ -61,9 +62,12 @@ public final class TasksServiceImpl implements Tasks {
 
     @Override
     public int start(String containerId) {
-        var response = stub.start(containerd.services.tasks.v1.StartRequest.newBuilder()
-                .setContainerId(containerId).build());
-        return response.getPid();
+        try {
+            return stub.start(containerd.services.tasks.v1.StartRequest.newBuilder()
+                    .setContainerId(containerId).build()).getPid();
+        } catch (StatusRuntimeException e) {
+            throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.TASK);
+        }
     }
 
     @Override
@@ -119,33 +123,49 @@ public final class TasksServiceImpl implements Tasks {
 
     @Override
     public TaskInfo inspect(String containerId) {
-        var process = stub.get(containerd.services.tasks.v1.GetRequest.newBuilder()
-                .setContainerId(containerId).build()).getProcess();
-        return new TaskInfo(containerId, process.getPid(),
-                ProtoMapper.mapStatus(process.getStatus().getNumber()), process.getExitStatus());
+        return find(containerId).orElseThrow(() ->
+                new TaskNotFoundException("no task for container " + containerId, null));
     }
 
     @Override
     public List<TaskInfo> list() {
-        return stub.list(containerd.services.tasks.v1.ListTasksRequest.getDefaultInstance())
-                .getTasksList().stream()
-                .map(p -> new TaskInfo(p.getContainerId(), p.getPid(),
-                        ProtoMapper.mapStatus(p.getStatus().getNumber()), p.getExitStatus()))
-                .toList();
+        try {
+            return stub.list(containerd.services.tasks.v1.ListTasksRequest.getDefaultInstance())
+                    .getTasksList().stream()
+                    .map(TasksServiceImpl::toTaskInfo)
+                    .toList();
+        } catch (StatusRuntimeException e) {
+            throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.TASK);
+        }
+    }
+
+    /**
+     * Looks the task up in one round trip, empty if there is none (a STOPPED task still counts).
+     *
+     * <p>This is the primitive callers should use. Asking {@code exists()} and then
+     * {@code inspect()} is two RPCs with a race between them: a task that exits and is reaped in
+     * the gap makes the second call fail on a container the first said was there.
+     */
+    public Optional<TaskInfo> find(String containerId) {
+        try {
+            return Optional.of(toTaskInfo(stub.get(containerd.services.tasks.v1.GetRequest.newBuilder()
+                    .setContainerId(containerId).build()).getProcess()));
+        } catch (StatusRuntimeException e) {
+            if (e.getStatus().getCode() == io.grpc.Status.Code.NOT_FOUND) {
+                return Optional.empty();
+            }
+            throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.TASK);
+        }
     }
 
     /** Returns whether a task exists for the container (true even for STOPPED tasks). */
     public boolean exists(String containerId) {
-        try {
-            stub.get(containerd.services.tasks.v1.GetRequest.newBuilder()
-                    .setContainerId(containerId).build());
-            return true;
-        } catch (StatusRuntimeException e) {
-            if (e.getStatus().getCode() == io.grpc.Status.Code.NOT_FOUND) {
-                return false;
-            }
-            throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.TASK);
-        }
+        return find(containerId).isPresent();
+    }
+
+    private static TaskInfo toTaskInfo(containerd.v1.types.Process process) {
+        return new TaskInfo(process.getContainerId(), process.getPid(),
+                ProtoMapper.mapStatus(process.getStatus().getNumber()), process.getExitStatus());
     }
 
     /** Creates an exec process (OCI process spec + IO FIFO paths) inside a running task. */

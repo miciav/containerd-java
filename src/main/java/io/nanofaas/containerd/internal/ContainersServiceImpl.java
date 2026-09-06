@@ -25,6 +25,9 @@ public final class ContainersServiceImpl implements Containers {
     /** Grace period between SIGTERM and SIGKILL in {@link #stop(String)}. */
     static final java.time.Duration STOP_TIMEOUT = java.time.Duration.ofSeconds(10);
 
+    /** How long {@link #close()} waits for in-flight exec IO before abandoning it. */
+    static final java.time.Duration IO_SHUTDOWN_TIMEOUT = java.time.Duration.ofSeconds(5);
+
     private final ManagedChannel channel;
     private final containerd.services.containers.v1.ContainersGrpc.ContainersBlockingStub stub;
     private final SnapshotManager snapshots;
@@ -138,12 +141,12 @@ public final class ContainersServiceImpl implements Containers {
         ContainerState state = ContainerState.UNKNOWN;
         int pid = -1;
         ExitStatus exitStatus = null;
-        if (tasks.exists(id)) {
-            var task = tasks.inspect(id);
-            state = task.state();
-            pid = task.pid();
+        var task = tasks.find(id);
+        if (task.isPresent()) {
+            state = task.get().state();
+            pid = task.get().pid();
             if (state == ContainerState.STOPPED) {
-                exitStatus = new ExitStatus(task.exitCode(), null);
+                exitStatus = new ExitStatus(task.get().exitCode(), null);
             }
         }
         return new ContainerStatus(container.getId(), container.getImage(), state, pid,
@@ -152,18 +155,23 @@ public final class ContainersServiceImpl implements Containers {
 
     @Override
     public List<Container> list() {
-        return stub.list(containerd.services.containers.v1.ListContainersRequest.getDefaultInstance())
-                .getContainersList().stream()
-                .map(ProtoMapper::map)
-                .toList();
+        try {
+            return stub.list(containerd.services.containers.v1.ListContainersRequest.getDefaultInstance())
+                    .getContainersList().stream()
+                    .map(ProtoMapper::map)
+                    .toList();
+        } catch (StatusRuntimeException e) {
+            throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.CONTAINER);
+        }
     }
 
     @Override
     public void remove(String id, RemoveOptions options) {
         log.debug("container remove: id={} removeSnapshot={} force={}",
                 id, options.removeSnapshot(), options.force());
-        if (tasks.exists(id)) {
-            var task = tasks.inspect(id);
+        var existingTask = tasks.find(id);
+        if (existingTask.isPresent()) {
+            var task = existingTask.get();
             boolean running = task.state() == ContainerState.RUNNING
                     || task.state() == ContainerState.CREATED
                     || task.state() == ContainerState.STARTING
@@ -191,21 +199,21 @@ public final class ContainersServiceImpl implements Containers {
             throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.CONTAINER);
         }
 
-        stub.delete(containerd.services.containers.v1.DeleteContainerRequest.newBuilder()
-                .setId(id).build());
-
-        if (options.removeSnapshot() && !container.getSnapshotKey().isEmpty()) {
-            snapshots.remove(container.getSnapshotter(), container.getSnapshotKey()); // idempotent
+        try {
+            stub.delete(containerd.services.containers.v1.DeleteContainerRequest.newBuilder()
+                    .setId(id).build());
+            if (options.removeSnapshot() && !container.getSnapshotKey().isEmpty()) {
+                snapshots.remove(container.getSnapshotter(), container.getSnapshotKey()); // idempotent
+            }
+        } catch (StatusRuntimeException e) {
+            throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.CONTAINER);
         }
         log.debug("container remove complete: id={}", id);
     }
 
     @Override
     public int start(String id) {
-        TaskInfo existing = null;
-        if (tasks.exists(id)) {
-            existing = tasks.inspect(id);
-        }
+        TaskInfo existing = tasks.find(id).orElse(null);
         if (existing != null && (existing.state() == ContainerState.RUNNING || existing.state() == ContainerState.STARTING)) {
             throw new ContainerStartException("task for container " + id + " is already running", null);
         }
@@ -285,10 +293,8 @@ public final class ContainersServiceImpl implements Containers {
 
     @Override
     public ExecResult exec(String id, ExecSpec spec) {
-        if (!tasks.exists(id)) {
-            throw new ExecException("no task for container " + id + "; start the container before exec");
-        }
-        var task = tasks.inspect(id);
+        var task = tasks.find(id).orElseThrow(() -> new ExecException(
+                "no task for container " + id + "; start the container before exec"));
         if (task.state() != ContainerState.RUNNING) {
             throw new ExecException("task for container " + id + " is not running (state=" + task.state() + ")");
         }
@@ -300,12 +306,16 @@ public final class ContainersServiceImpl implements Containers {
         // win the race and leave us with output we never read.
         var stdoutFuture = ioExecutor.submit(() -> IoManager.readFifo(fifos.stdout()));
         var stderrFuture = ioExecutor.submit(() -> IoManager.readFifo(fifos.stderr()));
+        java.util.concurrent.Future<?> stdinFuture = null;
         try {
             tasks.exec(id, execId, spec, fifos);
             int pid = tasks.startExec(id, execId);
-            if (spec.stdin() != null) {
-                ioExecutor.submit(() -> IoManager.writeFifo(fifos.stdin(), spec.stdin().getBytes(StandardCharsets.UTF_8)));
-            }
+            // Always write and close stdin, even with nothing to send: the write end must be
+            // opened and closed for the process to see EOF. Skipping it (as this did when
+            // ExecSpec.stdin() was null) leaves a process that reads stdin blocked forever.
+            byte[] stdin = spec.stdin() == null
+                    ? new byte[0] : spec.stdin().getBytes(StandardCharsets.UTF_8);
+            stdinFuture = ioExecutor.submit(() -> IoManager.writeFifo(fifos.stdin(), stdin));
             String stdout = stdoutFuture.get();
             String stderr = stderrFuture.get();
             ExitStatus status = tasks.waitExec(id, execId);
@@ -329,6 +339,10 @@ public final class ContainersServiceImpl implements Containers {
             if (!stderrFuture.isDone()) {
                 unblockReader(fifos.stderr());
             }
+            // Mirror image: a writer still blocked in open(2) needs a read end to pair with.
+            if (stdinFuture != null && !stdinFuture.isDone()) {
+                unblockWriter(fifos.stdin());
+            }
             try {
                 tasks.deleteExec(id, execId);
             } catch (RuntimeException e) {
@@ -347,8 +361,30 @@ public final class ContainersServiceImpl implements Containers {
         }
     }
 
-    /** Shuts down the IO virtual-thread pool. Called by the owning {@code ContainerdClient}. */
+    /** Opens and immediately closes a FIFO's read end so a writer blocked in open(2) proceeds. */
+    private void unblockWriter(Path fifo) {
+        try (var in = Files.newInputStream(fifo)) {
+            // open-close: the paired writer's open(2) now returns.
+        } catch (IOException ignored) {
+            // best effort — cleanup() removes the FIFO right after
+        }
+    }
+
+    /**
+     * Shuts the IO virtual-thread pool down and gives in-flight exec IO a moment to drain.
+     * The caller closes the gRPC channel right after, so without this an exec running
+     * concurrently with close() would have its output truncated with no diagnostic.
+     */
     public void close() {
         ioExecutor.shutdown();
+        try {
+            if (!ioExecutor.awaitTermination(IO_SHUTDOWN_TIMEOUT.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                log.warn("exec IO still in flight after {}; abandoning it", IO_SHUTDOWN_TIMEOUT);
+                ioExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            ioExecutor.shutdownNow();
+        }
     }
 }

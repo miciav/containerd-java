@@ -24,4 +24,20 @@ class IoManagerTest {
             assertThat(Files.exists(fifos.dir())).isFalse();
         }
     }
+
+    @Test
+    void anEmptyWriteStillGivesTheReaderEof() throws Exception {
+        // This is what exec relies on when ExecSpec.stdin() is null: opening and closing the
+        // write end is what makes the process's stdin read return, instead of blocking forever.
+        var fifos = IoManager.createFifoSet("test-empty-stdin");
+        try {
+            var executor = Executors.newVirtualThreadPerTaskExecutor();
+            var writer = executor.submit(() -> IoManager.writeFifo(fifos.stdin(), new byte[0]));
+            String read = IoManager.readFifo(fifos.stdin());
+            writer.get();
+            assertThat(read).isEmpty();
+        } finally {
+            IoManager.cleanup(fifos);
+        }
+    }
 }

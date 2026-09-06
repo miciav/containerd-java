@@ -2,6 +2,8 @@ package io.nanofaas.containerd.internal;
 
 import io.grpc.ManagedChannel;
 
+import java.nio.charset.StandardCharsets;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -27,12 +29,12 @@ public final class ImageRootfsResolver {
         var image = images.get(containerd.services.images.v1.GetImageRequest.newBuilder()
                 .setName(imageName).build()).getImage();
 
-        var top = JsonSupport.parse(new String(content.read(image.getTarget().getDigest())));
+        var top = JsonSupport.parse(json(content.read(image.getTarget().getDigest())));
         String mediaType = field(top, "mediaType");
         if (INDEX_MEDIA_TYPES.contains(mediaType)) {
             // pick the first platform entry matching the host platform, else the first entry
             String manifestDigest = pickPlatformManifest(top);
-            top = JsonSupport.parse(new String(content.read(manifestDigest)));
+            top = JsonSupport.parse(json(content.read(manifestDigest)));
             mediaType = field(top, "mediaType");
         }
         if (!MANIFEST_MEDIA_TYPES.contains(mediaType)) {
@@ -41,7 +43,7 @@ public final class ImageRootfsResolver {
 
         String configDigest = top.getFieldsOrThrow("config").getStructValue()
                 .getFieldsOrThrow("digest").getStringValue();
-        var config = JsonSupport.parse(new String(content.read(configDigest)));
+        var config = JsonSupport.parse(json(content.read(configDigest)));
         var diffIds = config.getFieldsOrThrow("rootfs").getStructValue()
                 .getFieldsOrThrow("diff_ids").getListValue().getValuesList();
 
@@ -67,6 +69,11 @@ public final class ImageRootfsResolver {
             }
         }
         return manifests.get(0).getStructValue().getFieldsOrThrow("digest").getStringValue();
+    }
+
+    /** OCI manifests and configs are UTF-8 by specification, never the platform default. */
+    private static String json(byte[] blob) {
+        return new String(blob, StandardCharsets.UTF_8);
     }
 
     private static String field(com.google.protobuf.Struct struct, String name) {

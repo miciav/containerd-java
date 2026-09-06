@@ -46,10 +46,14 @@ public final class ImagesServiceImpl implements Images {
 
     @Override
     public List<Image> list() {
-        return stub.list(containerd.services.images.v1.ListImagesRequest.getDefaultInstance())
-                .getImagesList().stream()
-                .map(ProtoMapper::map)
-                .toList();
+        try {
+            return stub.list(containerd.services.images.v1.ListImagesRequest.getDefaultInstance())
+                    .getImagesList().stream()
+                    .map(ProtoMapper::map)
+                    .toList();
+        } catch (StatusRuntimeException e) {
+            throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.IMAGE);
+        }
     }
 
     @Override
