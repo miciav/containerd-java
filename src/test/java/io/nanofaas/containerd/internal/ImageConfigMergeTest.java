@@ -96,8 +96,9 @@ class ImageConfigMergeTest {
         String json = specJson(spec().build(),
                 image(List.of(), List.of(), List.of(), "1000:1000", "/opt/sonarqube"));
 
-        assertThat(json).contains("\"cwd\":\"/opt/sonarqube\"");
-        assertThat(json).contains("\"uid\":1000").contains("\"gid\":1000");
+        assertThat(json).contains("\"cwd\":\"/opt/sonarqube\"")
+                .contains("\"uid\":1000")
+                .contains("\"gid\":1000");
     }
 
     @Test

@@ -30,7 +30,8 @@ class ContainerSpecTest {
 
     @Test
     void idIsRequired() {
-        assertThatThrownBy(() -> ContainerSpec.builder().image("alpine").build())
+        var builder = ContainerSpec.builder().image("alpine");
+        assertThatThrownBy(builder::build)
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("id");
     }

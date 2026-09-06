@@ -339,6 +339,9 @@ itself a consumer of the public API, so the analysis doubles as an end-to-end ex
 Ports 5432 and 9000 must be free: the containers share the host's network stack, because this
 library has no CNI and therefore no port mapping. The run checks both before starting anything.
 
+Coverage comes from JaCoCo (`build/reports/jacoco/test/`), which the analysis feeds to SonarQube;
+without it the server reports 0% no matter how many tests run.
+
 The analysis itself goes through the `org.sonarqube` Gradle plugin rather than a scanner
 container. The `sonar-scanner-cli` image is published for amd64 only and cannot run on arm64, and
 the plugin knows the source sets, compiled classes and test reports without being told.

@@ -1,6 +1,7 @@
 plugins {
     `java-library`
     application
+    jacoco
     id("com.google.protobuf") version "0.9.5"
     // Analysis runs through this rather than the sonar-scanner-cli image: that image is published
     // for amd64 only, so it cannot run on an arm64 host. The plugin also knows the source sets,
@@ -16,6 +17,11 @@ val grpcVersion = "1.73.0"
 val protobufVersion = "4.35.0"
 val nettyVersion = "4.1.121.Final" // MUST match grpc-netty's resolved netty; see Step 5
 val slf4jVersion = "2.0.17"
+val junitVersion = "5.11.4"
+val junitPlatformVersion = "1.11.4"
+val assertjVersion = "3.27.3"
+val jnrPosixVersion = "3.1.20"
+val javaxAnnotationVersion = "1.3.2"
 
 repositories {
     mavenCentral()
@@ -57,10 +63,10 @@ dependencies {
     api("io.grpc:grpc-protobuf:$grpcVersion")
     api("io.grpc:grpc-stub:$grpcVersion")
     // gRPC codegen emits @javax.annotation.Generated (JSR-250), absent from JDK 9+; compile-time only
-    compileOnly("javax.annotation:javax.annotation-api:1.3.2")
+    compileOnly("javax.annotation:javax.annotation-api:$javaxAnnotationVersion")
     api("com.google.protobuf:protobuf-java:$protobufVersion")
     implementation("com.google.protobuf:protobuf-java-util:$protobufVersion")
-    implementation("com.github.jnr:jnr-posix:3.1.20")
+    implementation("com.github.jnr:jnr-posix:$jnrPosixVersion")
     api("org.slf4j:slf4j-api:$slf4jVersion")
 
     // Epoll native libs: both classifiers coexist on the runtime classpath; Netty's native
@@ -72,18 +78,33 @@ dependencies {
     // GrpcChannelFactory. Runtime provides them transitively via the native epoll artifacts.
     compileOnly("io.netty:netty-transport-classes-epoll:$nettyVersion")
 
-    testImplementation(platform("org.junit:junit-bom:5.11.4"))
+    testImplementation(platform("org.junit:junit-bom:$junitVersion"))
     testImplementation("org.junit.jupiter:junit-jupiter")
-    testImplementation("org.assertj:assertj-core:3.27.3")
+    testImplementation("org.assertj:assertj-core:$assertjVersion")
     testImplementation("io.grpc:grpc-inprocess:$grpcVersion")
     // wiring test starts a real Netty epoll UDS server; epoll classes are compileOnly for main
     testImplementation("io.netty:netty-transport-classes-epoll:$nettyVersion")
     testRuntimeOnly("org.slf4j:slf4j-simple:$slf4jVersion")
-    testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.4")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher:$junitPlatformVersion")
 }
 
 tasks.test {
     useJUnitPlatform()
+    finalizedBy(tasks.jacocoTestReport)
+}
+
+// Coverage exists only if something measures it: without this SonarQube reports 0% however many
+// tests run, and its quality gate fails on new code that is in fact covered.
+tasks.jacocoTestReport {
+    dependsOn(tasks.test)
+    reports {
+        xml.required.set(true)   // what SonarQube reads
+        html.required.set(true)  // what a human reads
+    }
+    classDirectories.setFrom(files(classDirectories.files.map {
+        // The generated protobuf and gRPC stubs are not this project's code to cover.
+        fileTree(it) { exclude("containerd/**", "runtimeoptions/**") }
+    }))
 }
 
 // ---- integration tests (require a real containerd; not part of `check`) ----
@@ -118,6 +139,8 @@ sonar {
         // Vendored containerd protos and everything generated from them are not this project's code.
         property("sonar.exclusions", "**/build/generated/**,**/src/main/proto/**")
         property("sonar.junit.reportPaths", "build/test-results/test")
+        property("sonar.coverage.jacoco.xmlReportPaths",
+            layout.buildDirectory.file("reports/jacoco/test/jacocoTestReport.xml").get().asFile.path)
     }
 }
 

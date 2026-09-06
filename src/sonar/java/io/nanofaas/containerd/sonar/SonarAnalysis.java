@@ -74,11 +74,14 @@ public final class SonarAnalysis {
                 Credentials credentials = analysisToken(stack);
                 stack.authenticateWith(credentials.token());
                 adminPassword = credentials.adminPassword();
+                // Noted before the analysis: on a reused server the previous run's result is
+                // already there, and waiting for "a SUCCESS" would return it immediately.
+                String previous = stack.lastAnalysisId(PROJECT_KEY);
                 int exitCode = stack.runAnalysis(project, credentials.token(), PROJECT_KEY);
                 if (exitCode != 0) {
                     throw new IllegalStateException("the analysis exited with " + exitCode);
                 }
-                stack.awaitComputeEngine(PROJECT_KEY);
+                stack.awaitComputeEngine(PROJECT_KEY, previous);
                 report(stack);
             } finally {
                 Runtime.getRuntime().removeShutdownHook(cleanup);

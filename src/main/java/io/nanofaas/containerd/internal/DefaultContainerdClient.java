@@ -19,7 +19,6 @@ public final class DefaultContainerdClient implements ContainerdClient {
     private final String namespace;
     private final String snapshotter;
     private final String runtimeName;
-    private final String runtimeBinaryName;
     private final Images images;
     // Concrete type (not the Containers SPI) so close() can shut down its IO virtual-thread pool.
     private final ContainersServiceImpl containers;
@@ -39,7 +38,6 @@ public final class DefaultContainerdClient implements ContainerdClient {
         this.namespace = namespace;
         this.snapshotter = snapshotter;
         this.runtimeName = runtimeName;
-        this.runtimeBinaryName = runtimeBinaryName;
         // The NamespaceInterceptor is attached at the channel level, so EVERY call made through
         // this channel (version() and every facade built on it) carries the namespace header.
         this.channel = GrpcChannelFactory.createUnixDomainSocketChannel(socketPath,

@@ -20,6 +20,7 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
 import java.util.UUID;
 
 /**
@@ -168,15 +169,38 @@ final class SonarStack implements AutoCloseable {
     }
 
     /**
-     * Waits for SonarQube to finish processing the uploaded report.
+     * The id of the analysis SonarQube has most recently processed, or null if it has processed
+     * none. Taken before submitting a report so {@link #awaitComputeEngine} can tell the new
+     * result from the old one.
+     *
+     * @param projectKey the project to look at
+     * @return the current analysis id, or null
+     */
+    String lastAnalysisId(String projectKey) {
+        String body = get("/api/ce/component?component=" + projectKey);
+        Matcher id = ANALYSIS_ID.matcher(body == null ? "" : body);
+        return id.find() ? id.group(1) : null;
+    }
+
+    private static final java.util.regex.Pattern ANALYSIS_ID =
+            java.util.regex.Pattern.compile("\"analysisId\"\\s*:\\s*\"([^\"]+)\"");
+
+    /**
+     * Waits for SonarQube to finish processing the report just uploaded.
      *
      * <p>The scanner returns as soon as the report is uploaded, but nothing is queryable until the
-     * Compute Engine has processed it — asking for results straight away races with that and reads
-     * either nothing or the previous run's.
+     * Compute Engine has processed it — asking straight away reads either nothing or the previous
+     * run's results.
+     *
+     * <p>Waiting for "a SUCCESS" is not enough on a server that has analysed this project before:
+     * the previous run's SUCCESS is already sitting there and satisfies the check immediately,
+     * which returns stale numbers that look perfectly plausible. Hence {@code previousAnalysisId}:
+     * the wait ends only once the queue has drained and the reported analysis is a different one.
      *
      * @param projectKey the analysed project
+     * @param previousAnalysisId what {@link #lastAnalysisId} returned before the analysis ran
      */
-    void awaitComputeEngine(String projectKey) {
+    void awaitComputeEngine(String projectKey, String previousAnalysisId) {
         await("the compute engine", Duration.ofMinutes(5), () -> {
             String body = get("/api/ce/component?component=" + projectKey);
             if (body == null) {
@@ -185,9 +209,12 @@ final class SonarStack implements AutoCloseable {
             if (body.contains("\"status\":\"FAILED\"") || body.contains("\"status\":\"CANCELED\"")) {
                 throw new IllegalStateException("SonarQube failed to process the report: " + body);
             }
-            // No pending or in-progress task left means the report has been processed.
-            return body.contains("\"status\":\"SUCCESS\"")
-                    && !body.contains("\"pending\"") && !body.contains("\"inProgress\"");
+            if (!body.contains("\"queue\":[]") || !body.contains("\"status\":\"SUCCESS\"")) {
+                return false;
+            }
+            Matcher id = ANALYSIS_ID.matcher(body);
+            String current = id.find() ? id.group(1) : null;
+            return current != null && !current.equals(previousAnalysisId);
         });
     }
 

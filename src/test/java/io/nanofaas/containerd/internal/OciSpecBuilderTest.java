@@ -129,11 +129,12 @@ class OciSpecBuilderTest {
                 .pidsLimit(100)
                 .build());
         String json = any.getValue().toStringUtf8();
-        assertThat(json).contains("\"hard\":1024", "\"soft\":1024", "\"uid\":1000",
-                "\"gid\":1000", "\"shares\":512", "\"limit\":134217728", "\"limit\":100");
-        // no JSON number token with a fractional part (string contents are quoted, so a digit
-        // right after : , or [ is always a real number)
-        assertThat(json).doesNotMatch("[:,\\[]-?\\d+\\.\\d");
+        assertThat(json)
+                .contains("\"hard\":1024", "\"soft\":1024", "\"uid\":1000",
+                        "\"gid\":1000", "\"shares\":512", "\"limit\":134217728", "\"limit\":100")
+                // no JSON number token with a fractional part (string contents are quoted, so a
+                // digit right after : , or [ is always a real number)
+                .doesNotMatch("[:,\\[]-?\\d+\\.\\d");
     }
 
     @Test
@@ -180,8 +181,8 @@ class OciSpecBuilderTest {
                 ContainerSpec.builder().id("c1").image("scratch").hostNetwork(true).build())
                 .getValue().toStringUtf8();
 
-        assertThat(json).doesNotContain("\"type\":\"network\"");
-        assertThat(json).contains("\"type\":\"pid\"")
+        assertThat(json).doesNotContain("\"type\":\"network\"")
+                .contains("\"type\":\"pid\"")
                 .contains("\"type\":\"ipc\"")
                 .contains("\"type\":\"uts\"")
                 .contains("\"type\":\"mount\"");
@@ -211,7 +212,8 @@ class OciSpecBuilderTest {
 
     @Test
     void aNonPositiveOpenFileLimitIsRejected() {
-        assertThatThrownBy(() -> ContainerSpec.builder().id("c1").image("scratch").openFilesLimit(0))
+        var builder = ContainerSpec.builder().id("c1").image("scratch");
+        assertThatThrownBy(() -> builder.openFilesLimit(0))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("positive");
     }
 }

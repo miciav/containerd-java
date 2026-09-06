@@ -20,6 +20,8 @@ public final class ImageRootfsResolver {
             "application/vnd.oci.image.manifest.v1+json",
             "application/vnd.docker.distribution.manifest.v2+json");
 
+    private static final String DIGEST = "digest";
+
     private final containerd.services.images.v1.ImagesGrpc.ImagesBlockingStub images;
     private final ContentStoreReader content;
 
@@ -66,7 +68,7 @@ public final class ImageRootfsResolver {
         }
 
         String configDigest = top.getFieldsOrThrow("config").getStructValue()
-                .getFieldsOrThrow("digest").getStringValue();
+                .getFieldsOrThrow(DIGEST).getStringValue();
         var config = JsonSupport.parse(json(content.read(configDigest)));
         var diffIds = config.getFieldsOrThrow("rootfs").getStructValue()
                 .getFieldsOrThrow("diff_ids").getListValue().getValuesList();
@@ -123,10 +125,10 @@ public final class ImageRootfsResolver {
                     com.google.protobuf.Value.getDefaultInstance()).getStructValue();
             if (platform.getFieldsOrDefault("os", com.google.protobuf.Value.getDefaultInstance()).getStringValue().equals(host.os())
                     && platform.getFieldsOrDefault("architecture", com.google.protobuf.Value.getDefaultInstance()).getStringValue().equals(host.architecture())) {
-                return m.getStructValue().getFieldsOrThrow("digest").getStringValue();
+                return m.getStructValue().getFieldsOrThrow(DIGEST).getStringValue();
             }
         }
-        return manifests.get(0).getStructValue().getFieldsOrThrow("digest").getStringValue();
+        return manifests.get(0).getStructValue().getFieldsOrThrow(DIGEST).getStringValue();
     }
 
     /** OCI manifests and configs are UTF-8 by specification, never the platform default. */

@@ -30,6 +30,7 @@ public record ExecSpec(List<String> command, Map<String, String> environment, St
 
         /** Creates an empty builder; prefer {@link ExecSpec#builder()}. */
         public Builder() {
+            // every field has its default in its declaration; nothing to do here
         }
         private List<String> command = List.of();
         private Map<String, String> environment = Map.of();

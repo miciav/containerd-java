@@ -42,6 +42,6 @@ class ChainIdsTest {
 
     @Test
     void emptyLayerListHasEmptyChainId() {
-        assertThat(ChainIds.chainId(List.of())).isEqualTo("");
+        assertThat(ChainIds.chainId(List.of())).isEmpty();
     }
 }

@@ -11,7 +11,7 @@ public final class Example {
     private Example() {
     }
 
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] args) {
         try (ContainerdClient client = ContainerdClient.builder()
                 .socketPath(System.getProperty("io.nanofaas.containerd.socket", "/run/containerd/containerd.sock"))
                 .namespace("nanofaas")

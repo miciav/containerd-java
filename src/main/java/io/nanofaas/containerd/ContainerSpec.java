@@ -113,6 +113,7 @@ public final class ContainerSpec {
 
         /** Creates an empty builder; prefer {@link ContainerSpec#builder()}. */
         public Builder() {
+            // every field has its default in its declaration; nothing to do here
         }
         private String id;
         private String image;

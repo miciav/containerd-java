@@ -1,13 +1,11 @@
 package io.nanofaas.containerd.internal;
 
 import io.grpc.Status;
-import io.grpc.StatusRuntimeException;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.stub.StreamObserver;
 import io.nanofaas.containerd.ContainerAlreadyExistsException;
 import io.nanofaas.containerd.ContainerSpec;
-import io.nanofaas.containerd.ImageNotFoundException;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -178,7 +176,9 @@ class ContainersServiceImplTest {
     void createFailureRemovesPreparedSnapshotAndMapsException() throws Exception {
         try (var fake = new FakeServer()) {
             fake.failContainerCreate = true;
-            assertThatThrownBy(() -> service(fake).create(spec()))
+            var containers = service(fake);
+            var spec = spec();
+            assertThatThrownBy(() -> containers.create(spec))
                     .isInstanceOf(ContainerAlreadyExistsException.class);
             assertThat(fake.snapshotsPrepared.get()).isEqualTo(1);
             assertThat(fake.snapshotsRemoved.get()).isEqualTo(1);

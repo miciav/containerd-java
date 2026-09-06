@@ -32,9 +32,17 @@ public final class OciSpecBuilder {
             "CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FSETID", "CAP_FOWNER", "CAP_MKNOD", "CAP_NET_RAW",
             "CAP_SETGID", "CAP_SETUID", "CAP_SETFCAP", "CAP_SETPCAP", "CAP_NET_BIND_SERVICE",
             "CAP_SYS_CHROOT", "CAP_KILL", "CAP_AUDIT_WRITE");
-    private static final List<String> DEFAULT_NAMESPACES = List.of("pid", "network", "ipc", "uts", "mount");
+    // Mount options, named because the standard table below repeats them and a typo in one would
+    // silently weaken a container's isolation rather than fail.
+    private static final String NOSUID = "nosuid";
+    private static final String NOEXEC = "noexec";
+    private static final String NODEV = "nodev";
+    private static final String TMPFS = "tmpfs";
+
     /** The namespace to drop for host networking: without it the container keeps the host's stack. */
     private static final String NETWORK_NAMESPACE = "network";
+    private static final List<String> DEFAULT_NAMESPACES =
+            List.of("pid", NETWORK_NAMESPACE, "ipc", "uts", "mount");
     private static final List<String> DEFAULT_MASKED_PATHS = List.of(
             "/proc/acpi", "/proc/asound", "/proc/kcore", "/proc/keys", "/proc/latency_stats",
             "/proc/timer_list", "/proc/timer_stats", "/proc/sched_debug", "/sys/firmware", "/proc/scsi");
@@ -183,14 +191,14 @@ public final class OciSpecBuilder {
 
     private static Value buildStandardMounts(ContainerSpec spec) {
         List<Value> mounts = new ArrayList<>(List.of(
-                mount("proc", "proc", "/proc", List.of("nosuid", "noexec", "nodev")),
-                mount("tmpfs", "tmpfs", "/dev", List.of("nosuid", "strictatime", "mode=755", "size=65536k")),
+                mount("proc", "proc", "/proc", List.of(NOSUID, NOEXEC, NODEV)),
+                mount(TMPFS, TMPFS, "/dev", List.of(NOSUID, "strictatime", "mode=755", "size=65536k")),
                 mount("devpts", "devpts", "/dev/pts",
-                        List.of("nosuid", "noexec", "newinstance", "ptmxmode=0666", "mode=0620", "gid=5")),
-                mount("tmpfs", "shm", "/dev/shm", List.of("nosuid", "noexec", "nodev", "mode=1777", "size=65536k")),
-                mount("mqueue", "mqueue", "/dev/mqueue", List.of("nosuid", "noexec", "nodev")),
-                mount("sysfs", "sysfs", "/sys", List.of("nosuid", "noexec", "nodev", "ro")),
-                mount("cgroup", "cgroup", "/sys/fs/cgroup", List.of("nosuid", "noexec", "nodev", "relatime", "ro"))));
+                        List.of(NOSUID, NOEXEC, "newinstance", "ptmxmode=0666", "mode=0620", "gid=5")),
+                mount(TMPFS, "shm", "/dev/shm", List.of(NOSUID, NOEXEC, NODEV, "mode=1777", "size=65536k")),
+                mount("mqueue", "mqueue", "/dev/mqueue", List.of(NOSUID, NOEXEC, NODEV)),
+                mount("sysfs", "sysfs", "/sys", List.of(NOSUID, NOEXEC, NODEV, "ro")),
+                mount("cgroup", "cgroup", "/sys/fs/cgroup", List.of(NOSUID, NOEXEC, NODEV, "relatime", "ro"))));
         for (ContainerSpec.MountSpec m : spec.mounts()) {
             mounts.add(mount(m.type(), m.source(), m.destination(), m.options()));
         }

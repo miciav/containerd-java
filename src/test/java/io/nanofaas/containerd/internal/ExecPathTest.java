@@ -222,8 +222,10 @@ class ExecPathTest {
         try (var fake = new FakeShim()) {
             fake.failExecRpc = true;
 
+            var containers = service(fake);
+            var command = List.of("/bin/true");
             assertTimeoutPreemptively(Duration.ofSeconds(30), () ->
-                    assertThatThrownBy(() -> service(fake).exec("c1", List.of("/bin/true")))
+                    assertThatThrownBy(() -> containers.exec("c1", command))
                             .isInstanceOf(ExecException.class));
         }
     }
@@ -233,7 +235,8 @@ class ExecPathTest {
         try (var fake = new FakeShim()) {
             var containers = new ContainersServiceImpl(fake.channel, "overlayfs", "io.containerd.runc.v2", null);
             fake.channel.shutdownNow(); // no task lookup possible
-            assertThatThrownBy(() -> containers.exec("gone", List.of("/bin/true")))
+            var command = List.of("/bin/true");
+            assertThatThrownBy(() -> containers.exec("gone", command))
                     .isInstanceOf(RuntimeException.class);
         }
     }

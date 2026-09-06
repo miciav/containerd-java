@@ -62,9 +62,15 @@ class EventsServiceImplTest {
         private final List<LogRecord> records = new CopyOnWriteArrayList<>();
         private final Logger root = Logger.getLogger("");
         private final Handler handler = new Handler() {
-            @Override public void publish(LogRecord record) { records.add(record); }
-            @Override public void flush() { }
-            @Override public void close() { }
+            @Override public void publish(LogRecord entry) { records.add(entry); }
+
+            @Override public void flush() {
+                // nothing is buffered: publish() appends straight to the list
+            }
+
+            @Override public void close() {
+                // the list outlives the handler; the enclosing close() detaches it
+            }
         };
 
         JulCapture() {
@@ -112,7 +118,7 @@ class EventsServiceImplTest {
 
             assertThat(jul.thrown())
                     .as("shutting the client down must not throw on a gRPC callback thread")
-                    .noneMatch(t -> t instanceof RejectedExecutionException);
+                    .noneMatch(RejectedExecutionException.class::isInstance);
         }
     }
 
@@ -123,7 +129,8 @@ class EventsServiceImplTest {
             events.close();
             events.close(); // must not throw
 
-            assertThatThrownBy(() -> events.subscribe(EventFilter.all(), e -> { }))
+            var everything = EventFilter.all();
+            assertThatThrownBy(() -> events.subscribe(everything, e -> { }))
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("closed");
         }

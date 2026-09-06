@@ -108,7 +108,10 @@ class TaskLookupAndErrorMappingTest {
     void inspectThrowsTypedNotFoundForAMissingTask() throws Exception {
         try (var fake = new FakeTasks()) {
             fake.taskExists = false;
-            assertThatThrownBy(() -> new TasksServiceImpl(fake.channel).inspect("abc"))
+            // Constructed outside the lambda: were it inside and failing, the assertion would
+            // pass on the constructor's exception without inspect() ever running.
+            var tasks = new TasksServiceImpl(fake.channel);
+            assertThatThrownBy(() -> tasks.inspect("abc"))
                     .isInstanceOf(TaskNotFoundException.class)
                     .isNotInstanceOf(StatusRuntimeException.class);
         }

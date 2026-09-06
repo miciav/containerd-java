@@ -27,6 +27,7 @@ public final class RemoveOptions {
 
         /** Creates an empty builder; prefer {@link RemoveOptions#builder()}. */
         public Builder() {
+            // every field has its default in its declaration; nothing to do here
         }
         private boolean removeSnapshot;
         private boolean force;

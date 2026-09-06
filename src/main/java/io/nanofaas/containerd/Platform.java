@@ -10,9 +10,12 @@ import java.util.Locale;
  */
 public record Platform(String os, String architecture) {
 
+    private static final String LINUX = "linux";
+    private static final String AMD64 = "amd64";
+
     /** {@return the {@code linux/amd64} platform} */
     public static Platform linuxAmd64() {
-        return new Platform("linux", "amd64");
+        return new Platform(LINUX, AMD64);
     }
 
     /** {@return the platform of the host this JVM runs on, the default for pulls as in docker} */
@@ -28,17 +31,29 @@ public record Platform(String os, String architecture) {
      * @return the corresponding OCI platform
      */
     public static Platform fromOsArch(String osName, String arch) {
-        String os = osName.trim().toLowerCase(Locale.ROOT);
-        String osNorm = os.startsWith("linux") ? "linux" : os.startsWith("mac") ? "darwin"
-                : os.startsWith("windows") ? "windows" : os;
         // Normalize the architecture the same way as the os, rather than matching it case-sensitively.
         String archLower = arch.trim().toLowerCase(Locale.ROOT);
         String archNorm = switch (archLower) {
-            case "amd64", "x86_64" -> "amd64";
+            case AMD64, "x86_64" -> AMD64;
             case "aarch64", "arm64" -> "arm64";
             case "x86", "i386", "i486", "i586", "i686" -> "386";
             default -> archLower;
         };
-        return new Platform(osNorm, archNorm);
+        return new Platform(normalizeOs(osName), archNorm);
+    }
+
+    /** Maps a JVM {@code os.name} to its OCI name, passing anything unrecognised through. */
+    private static String normalizeOs(String osName) {
+        String os = osName.trim().toLowerCase(Locale.ROOT);
+        if (os.startsWith(LINUX)) {
+            return LINUX;
+        }
+        if (os.startsWith("mac")) {
+            return "darwin";
+        }
+        if (os.startsWith("windows")) {
+            return "windows";
+        }
+        return os;
     }
 }

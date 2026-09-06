@@ -26,6 +26,8 @@ public final class Identifiers {
      * @throws IllegalArgumentException if it is null, empty, too long, or malformed
      */
     public static String requireValid(String id) {
+        // Length first, deliberately: || short-circuits, so the pattern's nested quantifiers
+        // never see an input longer than MAX_LENGTH and cannot be driven into deep backtracking.
         if (id == null || id.length() > MAX_LENGTH || !IDENTIFIER.matcher(id).matches()) {
             throw new IllegalArgumentException("invalid containerd identifier: " + id);
         }

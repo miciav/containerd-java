@@ -25,6 +25,16 @@ versions may carry breaking changes.
 - `./gradlew sonarAnalysis` analyses this project with SonarQube, running the server and its
   database as containers driven by this library. `-PsonarArgs=--keep` leaves the stack up for
   browsing; `-PsonarArgs=--cleanup` removes what a kept run left behind.
+- JaCoCo coverage reporting, wired into the analysis. Without it SonarQube reported 0% however
+  many tests ran, and failed its quality gate on code that was in fact covered. Line coverage is
+  currently 69%, branch 56%.
+
+### Fixed
+
+- Removed a dead `runtimeBinaryName` field in `DefaultContainerdClient`, unused imports, and a
+  test that asserted nothing while its name promised it checked the epoll error message — it
+  could not have: that message only appears when epoll is absent, which is when the suite cannot
+  run at all.
 
 ### Changed
 

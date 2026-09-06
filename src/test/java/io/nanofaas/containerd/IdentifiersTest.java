@@ -30,7 +30,8 @@ class IdentifiersTest {
         assertThatThrownBy(() -> Identifiers.requireValid("")).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> Identifiers.requireValid(null)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> Identifiers.requireValid("has space")).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> Identifiers.requireValid("a".repeat(77)))
+        String tooLong = "a".repeat(77);
+        assertThatThrownBy(() -> Identifiers.requireValid(tooLong))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }
