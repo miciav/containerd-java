@@ -1,0 +1,111 @@
+name: build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch supersedes an in-flight run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: build + unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # Also validates the Gradle wrapper jar against the published checksums.
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build and run unit tests
+        run: ./gradlew build --stacktrace
+
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-report
+          path: build/reports/tests/test
+          retention-days: 7
+
+  integration:
+    name: integration tests (real containerd)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # The runner ships containerd 1.7.x with Docker. This library targets the 2.x API and is
+      # pinned to a specific version in build.gradle.kts, so install exactly that one rather
+      # than testing against an API the vendored protos do not match. Reading the pin from the
+      # build file keeps the two from drifting apart.
+      - name: Install pinned containerd and runc
+        run: |
+          set -euo pipefail
+          version="$(grep -oP 'val containerdApiVersion = "v\K[0-9.]+' build.gradle.kts)"
+          echo "installing containerd ${version} (pin from build.gradle.kts)"
+
+          curl -fsSL -o containerd.tar.gz \
+            "https://github.com/containerd/containerd/releases/download/v${version}/containerd-${version}-linux-amd64.tar.gz"
+          sudo tar -C /usr/local -xzf containerd.tar.gz
+
+          runc_version=v1.3.4
+          curl -fsSL -o runc "https://github.com/opencontainers/runc/releases/download/${runc_version}/runc.amd64"
+          sudo install -m 755 runc /usr/local/sbin/runc
+
+          # Docker's containerd 1.7 holds the default socket; stop it so 2.x owns the path.
+          sudo systemctl stop docker.socket docker.service containerd.service || true
+
+          sudo mkdir -p /etc/containerd
+          /usr/local/bin/containerd config default | sudo tee /etc/containerd/config.toml > /dev/null
+          sudo /usr/local/bin/containerd --log-level warn &
+
+          for _ in $(seq 1 30); do
+            [ -S /run/containerd/containerd.sock ] && break
+            sleep 1
+          done
+          sudo /usr/local/bin/ctr version
+          # The socket is root-owned; the runner user needs it for the tests below.
+          sudo chmod 666 /run/containerd/containerd.sock
+
+      - name: Run integration tests
+        run: ./gradlew integrationTest --stacktrace
+
+      # The integration tests skip themselves via JUnit Assumptions when containerd is not
+      # reachable. Without this the job would go green having run nothing at all.
+      - name: Fail if integration tests were skipped or did not run
+        run: |
+          set -euo pipefail
+          results=build/test-results/integrationTest
+          [ -d "$results" ] || { echo "::error::no integration test results at $results"; exit 1; }
+          total=$(grep -ho 'tests="[0-9]*"' "$results"/*.xml | grep -o '[0-9]*' | paste -sd+ | bc)
+          skipped=$(grep -ho 'skipped="[0-9]*"' "$results"/*.xml | grep -o '[0-9]*' | paste -sd+ | bc)
+          echo "integration tests: ${total} run, ${skipped} skipped"
+          [ "$total" -gt 0 ] || { echo "::error::no integration tests ran"; exit 1; }
+          [ "$skipped" -eq 0 ] || { echo "::error::${skipped} integration tests skipped (containerd unreachable?)"; exit 1; }
+
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-report
+          path: build/reports/tests/integrationTest
+          retention-days: 7
