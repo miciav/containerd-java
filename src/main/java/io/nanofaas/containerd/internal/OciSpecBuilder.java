@@ -56,25 +56,20 @@ public final class OciSpecBuilder {
     /** Builds the process spec for exec as a typeurl Any (JSON payload). */
     public static Any buildExecSpec(List<String> command, Map<String, String> environment, String workingDir) {
         Struct.Builder process = process(command, environment, workingDir, null, List.of());
-        // An exec inherits the container's privileges; it must not be able to gain more.
-        process.putFields("noNewPrivileges", boolValue(true));
         return toAny(PROCESS_TYPE_URL, process.build());
     }
 
     private static Struct.Builder buildProcess(ContainerSpec spec) {
         Struct.Builder process = process(spec.command(), spec.environment(), spec.workingDir(),
                 spec.user(), List.of("TERM=xterm"));
-        // The init process may raise privileges (a container entrypoint that calls setuid);
-        // execs into it may not, hence the difference with buildExecSpec.
-        process.putFields("noNewPrivileges", boolValue(false));
         process.putFields("rlimits", rlimitsValue());
         return process;
     }
 
     /**
      * The fields every OCI process spec carries, shared by the container's init process and by
-     * exec. {@code user} is {@code null} for exec (which always runs as uid 0);
-     * {@code extraEnv} is prepended after PATH and before the caller's environment.
+     * exec, so the two cannot drift apart. {@code user} is {@code null} for exec (which always
+     * runs as uid 0); {@code extraEnv} is prepended after PATH and before the caller's environment.
      */
     private static Struct.Builder process(List<String> command, Map<String, String> environment,
                                           String workingDir, String user, List<String> extraEnv) {
@@ -91,6 +86,11 @@ public final class OciSpecBuilder {
                 .putFields("args", stringListValue(args))
                 .putFields("env", stringListValue(env))
                 .putFields("cwd", stringValue(workingDir != null ? workingDir : "/"))
+                // Same value for the init process and for exec, matching what docker and ctr do
+                // by default: setuid binaries keep working, and a command behaves the same way
+                // whether it is the entrypoint or an exec. Previously exec alone set this true,
+                // so "sudo" failed under exec and worked as the entrypoint, with nothing saying why.
+                .putFields("noNewPrivileges", boolValue(false))
                 .putFields("capabilities", structValue(capabilitiesValue()));
     }
 

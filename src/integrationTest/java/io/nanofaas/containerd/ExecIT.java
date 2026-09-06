@@ -50,4 +50,33 @@ class ExecIT extends ContainerdConnectionIT {
             client.containers().remove(id, RemoveOptions.builder().removeSnapshot(true).force(true).build());
         }
     }
+
+    @Test
+    @Timeout(120)
+    void execAndEntrypointSeeTheSameNoNewPrivsFlag() {
+        // Reads the flag back from the kernel rather than trusting the spec we sent. The two
+        // used to disagree (exec 1, entrypoint 0), so "sudo" failed under exec only.
+        String id = "it-nnp-" + UUID.randomUUID();
+        client.containers().create(ContainerSpec.builder().id(id).image(ALPINE)
+                .command(List.of("/bin/sh", "-c",
+                        "grep NoNewPrivs /proc/self/status > /nnp-entrypoint; while true; do sleep 5; done"))
+                .build());
+        try {
+            client.containers().start(id);
+
+            ExecResult fromExec = client.containers().exec(id,
+                    List.of("/bin/sh", "-c", "grep NoNewPrivs /proc/self/status"));
+            ExecResult fromEntrypoint = client.containers().exec(id,
+                    List.of("/bin/sh", "-c", "cat /nnp-entrypoint"));
+
+            assertThat(fromExec.exitCode()).isZero();
+            assertThat(fromEntrypoint.exitCode()).isZero();
+            assertThat(fromExec.stdout().trim())
+                    .as("exec must not be more restricted than the entrypoint")
+                    .isEqualTo(fromEntrypoint.stdout().trim())
+                    .isEqualTo("NoNewPrivs:\t0");
+        } finally {
+            client.containers().remove(id, RemoveOptions.builder().removeSnapshot(true).force(true).build());
+        }
+    }
 }

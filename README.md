@@ -100,6 +100,10 @@ result.stderr();    // "error\n"
 Requires the container's task to already be `RUNNING`; internally, IO travels over FIFOs
 (`jnr-posix` `mkfifo`, no shell) read on JDK 21 virtual threads.
 
+An exec runs under the same privilege rules as the container's entrypoint: `no_new_privs` is
+off, as it is by default in docker and `ctr`, so setuid binaries behave the same way whichever
+way the command is started.
+
 ### Events
 
 ```java

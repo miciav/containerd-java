@@ -145,4 +145,20 @@ class OciSpecBuilderTest {
                 .containsExactly("/bin/echo", "hello");
         assertThat(process.getFieldsOrThrow("cwd").getStringValue()).isEqualTo("/tmp");
     }
+
+    @Test
+    void theInitProcessAndExecAgreeOnPrivilegeEscalation() {
+        // These two used to disagree: exec set noNewPrivileges true while the entrypoint set it
+        // false, so "sudo" failed under exec and worked as the entrypoint. Both now match the
+        // docker/ctr default of false. Changing that is a security decision, not a cleanup.
+        String containerSpec = OciSpecBuilder.buildContainerSpec(
+                ContainerSpec.builder().id("c1").image("scratch").build())
+                .getValue().toStringUtf8();
+        String execSpec = OciSpecBuilder.buildExecSpec(
+                java.util.List.of("sudo", "whoami"), java.util.Map.of(), null)
+                .getValue().toStringUtf8();
+
+        assertThat(containerSpec).contains("\"noNewPrivileges\":false");
+        assertThat(execSpec).contains("\"noNewPrivileges\":false");
+    }
 }
