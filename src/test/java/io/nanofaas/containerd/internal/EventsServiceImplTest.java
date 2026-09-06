@@ -1,0 +1,131 @@
+package io.nanofaas.containerd.internal;
+
+import io.grpc.ManagedChannel;
+import io.grpc.inprocess.InProcessChannelBuilder;
+import io.grpc.inprocess.InProcessServerBuilder;
+import io.grpc.stub.ServerCallStreamObserver;
+import io.grpc.stub.StreamObserver;
+import io.nanofaas.containerd.EventFilter;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.logging.Handler;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+class EventsServiceImplTest {
+
+    /** An Events service that accepts a subscription and holds the stream open. */
+    private static final class FakeEvents implements AutoCloseable {
+        final io.grpc.Server server;
+        final ManagedChannel channel;
+        final CountDownLatch streamOpen = new CountDownLatch(1);
+        final CountDownLatch streamCancelled = new CountDownLatch(1);
+        final AtomicReference<StreamObserver<containerd.types.Envelope>> stream = new AtomicReference<>();
+
+        FakeEvents() throws Exception {
+            String name = InProcessServerBuilder.generateName();
+            this.server = InProcessServerBuilder.forName(name)
+                    .addService(containerd.services.events.v1.EventsGrpc.bindService(
+                            new containerd.services.events.v1.EventsGrpc.EventsImplBase() {
+                                @Override
+                                public void subscribe(containerd.services.events.v1.SubscribeRequest request,
+                                                      StreamObserver<containerd.types.Envelope> o) {
+                                    ((ServerCallStreamObserver<containerd.types.Envelope>) o)
+                                            .setOnCancelHandler(streamCancelled::countDown);
+                                    stream.set(o);
+                                    streamOpen.countDown();
+                                }
+                            }))
+                    .build().start();
+            this.channel = InProcessChannelBuilder.forName(name).build();
+        }
+
+        @Override
+        public void close() throws Exception {
+            channel.shutdownNow();
+            server.shutdownNow();
+            server.awaitTermination(5, TimeUnit.SECONDS);
+        }
+    }
+
+    /** Collects everything logged through JUL, which is where gRPC reports callback failures. */
+    private static final class JulCapture implements AutoCloseable {
+        private final List<LogRecord> records = new CopyOnWriteArrayList<>();
+        private final Logger root = Logger.getLogger("");
+        private final Handler handler = new Handler() {
+            @Override public void publish(LogRecord record) { records.add(record); }
+            @Override public void flush() { }
+            @Override public void close() { }
+        };
+
+        JulCapture() {
+            root.addHandler(handler);
+        }
+
+        List<Throwable> thrown() {
+            return records.stream().map(LogRecord::getThrown).filter(t -> t != null).toList();
+        }
+
+        @Override
+        public void close() {
+            root.removeHandler(handler);
+        }
+    }
+
+    @Test
+    void closingASubscriptionCancelsTheUnderlyingStream() throws Exception {
+        try (var fake = new FakeEvents()) {
+            var events = new EventsServiceImpl(fake.channel, "nanofaas");
+            var subscription = events.subscribe(EventFilter.topics("/tasks/exit"), e -> { });
+            assertThat(fake.streamOpen.await(5, TimeUnit.SECONDS)).isTrue();
+
+            subscription.close();
+
+            assertThat(fake.streamCancelled.await(5, TimeUnit.SECONDS))
+                    .as("server must observe the cancellation, not keep streaming into a dead subscription")
+                    .isTrue();
+            events.close();
+        }
+    }
+
+    @Test
+    void closingTheServiceCancelsStreamsWithoutRejectingWorkOnCallbackThreads() throws Exception {
+        try (var fake = new FakeEvents(); var jul = new JulCapture()) {
+            var events = new EventsServiceImpl(fake.channel, "nanofaas");
+            // The user never closes the Subscription; they just close the client.
+            events.subscribe(EventFilter.all(), e -> { });
+            assertThat(fake.streamOpen.await(5, TimeUnit.SECONDS)).isTrue();
+
+            // Exactly what DefaultContainerdClient.close() does.
+            events.close();
+            fake.channel.shutdownNow();
+            Thread.sleep(1000); // let any reconnect attempt fire
+
+            assertThat(jul.thrown())
+                    .as("shutting the client down must not throw on a gRPC callback thread")
+                    .noneMatch(t -> t instanceof RejectedExecutionException);
+        }
+    }
+
+    @Test
+    void closeIsIdempotentAndRejectsLateSubscriptions() throws Exception {
+        try (var fake = new FakeEvents()) {
+            var events = new EventsServiceImpl(fake.channel, "nanofaas");
+            events.close();
+            events.close(); // must not throw
+
+            assertThatThrownBy(() -> events.subscribe(EventFilter.all(), e -> { }))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("closed");
+        }
+    }
+}

@@ -20,6 +20,7 @@ public final class ContentStoreReader {
         ByteArrayOutputStream out = new ByteArrayOutputStream((int) Math.min(size, 1 << 20));
         long offset = 0;
         while (offset < size) {
+            long offsetBefore = offset;
             // Client-streaming Read: the blocking stub returns an Iterator (not Iterable).
             var chunks = stub.read(containerd.services.content.v1.ReadContentRequest.newBuilder()
                     .setDigest(digest).setOffset(offset).setSize(size - offset).build());
@@ -27,6 +28,12 @@ public final class ContentStoreReader {
                 var chunk = chunks.next();
                 out.writeBytes(chunk.getData().toByteArray());
                 offset += chunk.getData().size();
+            }
+            if (offset == offsetBefore) {
+                // The stream completed without delivering a byte (blob truncated or collected
+                // between Info and Read). Retrying would re-issue the same request forever.
+                throw new IllegalStateException("content store returned no data for " + digest
+                        + " at offset " + offset + " (expected " + size + " bytes)");
             }
         }
         return out.toByteArray();

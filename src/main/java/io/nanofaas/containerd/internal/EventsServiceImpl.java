@@ -2,7 +2,8 @@ package io.nanofaas.containerd.internal;
 
 import io.grpc.ManagedChannel;
 import io.grpc.StatusRuntimeException;
-import io.grpc.stub.StreamObserver;
+import io.grpc.stub.ClientCallStreamObserver;
+import io.grpc.stub.ClientResponseObserver;
 import io.nanofaas.containerd.Event;
 import io.nanofaas.containerd.EventFilter;
 import io.nanofaas.containerd.Subscription;
@@ -11,10 +12,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 /**
@@ -30,6 +35,10 @@ public final class EventsServiceImpl implements Events {
 
     private final containerd.services.events.v1.EventsGrpc.EventsStub stub;
     private final String namespace;
+    /** Set once {@link #close()} runs: stops every subscription and every executor submission. */
+    private final AtomicBoolean closed = new AtomicBoolean(false);
+    /** Live subscriptions, so {@link #close()} can cancel their in-flight gRPC calls. */
+    private final Set<StreamSubscription> subscriptions = ConcurrentHashMap.newKeySet();
     private final java.util.concurrent.ExecutorService handlerExecutor =
             Executors.newVirtualThreadPerTaskExecutor();
     private final java.util.concurrent.ScheduledExecutorService reconnectScheduler =
@@ -46,56 +55,15 @@ public final class EventsServiceImpl implements Events {
 
     @Override
     public Subscription subscribe(EventFilter filter, Consumer<Event> handler) {
-        var closed = new AtomicBoolean(false);
-        var backoff = new AtomicLong(INITIAL_BACKOFF_MS);
         log.debug("events subscribe: filters={}", filter.toFieldpathFilters(namespace));
-        connect(filter, handler, closed, backoff);
-        return () -> {
-            closed.set(true);
-            log.debug("events subscription closed");
-        };
-    }
-
-    private void connect(EventFilter filter, Consumer<Event> handler,
-                         AtomicBoolean closed, AtomicLong backoff) {
-        if (closed.get()) {
-            return;
+        var subscription = new StreamSubscription(filter, handler);
+        subscriptions.add(subscription);
+        if (closed.get()) { // the client was closed concurrently with this call
+            subscriptions.remove(subscription);
+            throw new IllegalStateException("containerd client is closed");
         }
-        var request = containerd.services.events.v1.SubscribeRequest.newBuilder()
-                .addAllFilters(filter.toFieldpathFilters(namespace))
-                .build();
-        stub.subscribe(request, new StreamObserver<containerd.types.Envelope>() {
-            @Override
-            public void onNext(containerd.types.Envelope envelope) {
-                if (closed.get()) {
-                    return;
-                }
-                backoff.set(INITIAL_BACKOFF_MS); // the stream is healthy: reset the backoff
-                // The stream is scoped to the namespace server-side; select topics client-side,
-                // because this containerd's fieldpath parser rejects multi-filter combinations.
-                if (!matches(filter, envelope.getTopic())) {
-                    return;
-                }
-                Event event = EventMapper.map(envelope);
-                handlerExecutor.submit(() -> {
-                    try {
-                        handler.accept(event);
-                    } catch (Exception e) {
-                        log.warn("event handler threw for topic {}", event.topic(), e);
-                    }
-                });
-            }
-
-            @Override
-            public void onError(Throwable t) {
-                handleStreamEnd(t, filter, handler, closed, backoff);
-            }
-
-            @Override
-            public void onCompleted() {
-                handleStreamEnd(null, filter, handler, closed, backoff);
-            }
-        });
+        subscription.connect();
+        return subscription;
     }
 
     /** Client-side topic selection: an empty topic list matches every topic. */
@@ -104,33 +72,135 @@ public final class EventsServiceImpl implements Events {
         return topics.isEmpty() || topics.contains(topic);
     }
 
-    private void handleStreamEnd(Throwable error, EventFilter filter, Consumer<Event> handler,
-                                 AtomicBoolean closed, AtomicLong backoff) {
-        if (closed.get()) {
-            return;
-        }
-        if (error instanceof StatusRuntimeException sre
-                && sre.getStatus().getCode() == io.grpc.Status.Code.UNIMPLEMENTED) {
-            log.error("events not supported by this containerd; giving up");
-            return;
-        }
-        long delay = backoff.getAndSet(Math.min(backoff.get() * 2, MAX_BACKOFF_MS));
-        if (error != null) {
-            log.warn("events stream error (reconnecting in {}ms): {}", delay, error.getMessage());
-        } else {
-            log.warn("events stream ended (reconnecting in {}ms)", delay);
-        }
-        scheduleReconnect(delay, () -> connect(filter, handler, closed, backoff));
-    }
-
-    /** Schedules a one-shot reconnect on the shared daemon scheduler. */
-    private void scheduleReconnect(long delayMs, Runnable reconnect) {
-        reconnectScheduler.schedule(reconnect, delayMs, TimeUnit.MILLISECONDS);
-    }
-
-    /** Shuts down the handler and reconnect executors; called when the owning client is closed. */
+    /**
+     * Shuts the service down: every subscription is cancelled (so no gRPC callback can schedule
+     * further work) before the executors that would run that work are stopped. Doing it in the
+     * other order let a stream failing during shutdown reach a terminated scheduler and throw
+     * {@link RejectedExecutionException} on a gRPC callback thread.
+     */
     public void close() {
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
+        for (StreamSubscription subscription : Set.copyOf(subscriptions)) {
+            subscription.close();
+        }
         handlerExecutor.shutdown();
         reconnectScheduler.shutdown();
+    }
+
+    /** One subscription: its filter, its handler, and the gRPC call currently carrying it. */
+    private final class StreamSubscription implements Subscription {
+
+        private final EventFilter filter;
+        private final Consumer<Event> handler;
+        private final AtomicBoolean subscriptionClosed = new AtomicBoolean(false);
+        private final AtomicLong backoff = new AtomicLong(INITIAL_BACKOFF_MS);
+        private final AtomicReference<ClientCallStreamObserver<?>> call = new AtomicReference<>();
+
+        StreamSubscription(EventFilter filter, Consumer<Event> handler) {
+            this.filter = filter;
+            this.handler = handler;
+        }
+
+        /** Whether this subscription should stop: it was closed, or the whole service was. */
+        private boolean stopped() {
+            return subscriptionClosed.get() || closed.get();
+        }
+
+        void connect() {
+            if (stopped()) {
+                return;
+            }
+            var request = containerd.services.events.v1.SubscribeRequest.newBuilder()
+                    .addAllFilters(filter.toFieldpathFilters(namespace))
+                    .build();
+            stub.subscribe(request, new ClientResponseObserver<
+                    containerd.services.events.v1.SubscribeRequest, containerd.types.Envelope>() {
+
+                @Override
+                public void beforeStart(ClientCallStreamObserver<
+                        containerd.services.events.v1.SubscribeRequest> requestStream) {
+                    // Hold the call so close() can cancel it; without this the server keeps
+                    // streaming into a subscription nobody reads for the life of the channel.
+                    call.set(requestStream);
+                    if (stopped()) {
+                        requestStream.cancel("subscription closed", null);
+                    }
+                }
+
+                @Override
+                public void onNext(containerd.types.Envelope envelope) {
+                    if (stopped()) {
+                        return;
+                    }
+                    backoff.set(INITIAL_BACKOFF_MS); // the stream is healthy: reset the backoff
+                    // The stream is scoped to the namespace server-side; select topics client-side,
+                    // because this containerd's fieldpath parser rejects multi-filter combinations.
+                    if (!matches(filter, envelope.getTopic())) {
+                        return;
+                    }
+                    Event event = EventMapper.map(envelope);
+                    try {
+                        handlerExecutor.submit(() -> {
+                            try {
+                                handler.accept(event);
+                            } catch (Exception e) {
+                                log.warn("event handler threw for topic {}", event.topic(), e);
+                            }
+                        });
+                    } catch (RejectedExecutionException e) {
+                        // the client was closed between the stopped() check and the submit
+                        log.debug("dropping event {} : client is closing", event.topic());
+                    }
+                }
+
+                @Override
+                public void onError(Throwable t) {
+                    handleStreamEnd(t);
+                }
+
+                @Override
+                public void onCompleted() {
+                    handleStreamEnd(null);
+                }
+            });
+        }
+
+        private void handleStreamEnd(Throwable error) {
+            if (stopped()) {
+                return;
+            }
+            if (error instanceof StatusRuntimeException sre
+                    && sre.getStatus().getCode() == io.grpc.Status.Code.UNIMPLEMENTED) {
+                log.error("events not supported by this containerd; giving up");
+                return;
+            }
+            long delay = backoff.getAndUpdate(current -> Math.min(current * 2, MAX_BACKOFF_MS));
+            if (error != null) {
+                log.warn("events stream error (reconnecting in {}ms): {}", delay, error.getMessage());
+            } else {
+                log.warn("events stream ended (reconnecting in {}ms)", delay);
+            }
+            try {
+                reconnectScheduler.schedule(this::connect, delay, TimeUnit.MILLISECONDS);
+            } catch (RejectedExecutionException e) {
+                // the client was closed between the stopped() check and the schedule
+                log.debug("not reconnecting events stream: client is closing");
+            }
+        }
+
+        @Override
+        public void close() {
+            if (!subscriptionClosed.compareAndSet(false, true)) {
+                return;
+            }
+            subscriptions.remove(this);
+            ClientCallStreamObserver<?> current = call.getAndSet(null);
+            if (current != null) {
+                current.cancel("subscription closed", null);
+            }
+            log.debug("events subscription closed");
+        }
     }
 }

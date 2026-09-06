@@ -66,8 +66,10 @@ public final class ContainersServiceImpl implements Containers {
                     .setSpec(OciSpecBuilder.buildContainerSpec(spec))
                     .setRuntime(containerd.services.containers.v1.Container.Runtime.newBuilder()
                             .setName(runtimeName))
-                    .putLabels("containerd.io/gc.ref.snapshot." + snapshotter, spec.id())
+                    // User labels first: the GC ref must win, because losing it would let
+                    // containerd collect the snapshot out from under a live container.
                     .putAllLabels(spec.labels())
+                    .putLabels("containerd.io/gc.ref.snapshot." + snapshotter, spec.id())
                     .build();
             var created = stub.create(containerd.services.containers.v1.CreateContainerRequest.newBuilder()
                     .setContainer(container).build()).getContainer();

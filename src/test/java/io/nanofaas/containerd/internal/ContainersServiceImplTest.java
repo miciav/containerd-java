@@ -158,6 +158,23 @@ class ContainersServiceImplTest {
     }
 
     @Test
+    void userLabelsCannotOverwriteTheGcSnapshotReference() throws Exception {
+        try (var fake = new FakeServer()) {
+            // A user label on the reserved GC key must not win: losing that reference would let
+            // containerd collect the snapshot out from under a live container.
+            service(fake).create(ContainerSpec.builder().id("test-1").image("scratch:latest")
+                    .labels(java.util.Map.of(
+                            "containerd.io/gc.ref.snapshot.overlayfs", "hijacked",
+                            "app", "nanofaas"))
+                    .build());
+
+            assertThat(fake.created.get().getLabelsMap())
+                    .containsEntry("containerd.io/gc.ref.snapshot.overlayfs", "test-1")
+                    .containsEntry("app", "nanofaas");
+        }
+    }
+
+    @Test
     void createFailureRemovesPreparedSnapshotAndMapsException() throws Exception {
         try (var fake = new FakeServer()) {
             fake.failContainerCreate = true;
