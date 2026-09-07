@@ -228,6 +228,37 @@ let a CI job pass having run nothing, the workflow fails the build if any integr
 or if none ran. Every test uses a
 unique id (`it-<name>-` + UUID) and cleans up its own containers/snapshots in `finally`/`@AfterEach`.
 
+## End-to-end scenario
+
+Integration tests run against whatever containerd the developer's machine already has. That
+leaves the more interesting half of this library's claims untested: rootless containers, CNI
+attachment into RootlessKit's network namespace, and a runtime that is crun rather than runc.
+`e2e/containerd_java_e2e.py` covers them by creating the machine it needs, on a machine that has
+nothing on it yet.
+
+It is a [sonata-engine](https://github.com/miciav/sonata) workflow with five tasks around one
+resource: build the demo from the working tree, acquire a Multipass VM, install containerd and
+crun to run rootless in it, define a CNI network that declares DNS, deploy the demo, run it, and
+release the VM. The VM is a `Resource`, so it is torn down on the failure path too — the case
+that would otherwise leave a machine running.
+
+```bash
+uv venv .venv-e2e && uv pip install --python .venv-e2e \
+    /path/to/sonata "/path/to/sonata/packages/sonata-tasks[multipass]"
+.venv-e2e/bin/python e2e/containerd_java_e2e.py
+KEEP_VM=1 .venv-e2e/bin/python e2e/containerd_java_e2e.py   # leave the VM up for a second look
+```
+
+The demo it runs is `src/e2e`, a plain application built on the two libraries: it pulls an image,
+starts a pair of containers on a shared network and has one reach the other by name, reads logs,
+execs (with stdin, and checking what the exec inherits), applies limits, watches events, uses the
+host's network, and checks that nothing is left behind. It reports which scenarios held rather
+than asserting, so one failure does not hide the rest, and each runs under a time limit — without
+one a hang stops the whole run with no report at all.
+
+This is what found the exec faults fixed in `68a51b7`: the unit tests run against a fake shim,
+which behaves differently from a real one in exactly the places that mattered.
+
 ## Conceptual glossary
 
 containerd's object model does not map one-to-one onto Docker's. Understanding these five
