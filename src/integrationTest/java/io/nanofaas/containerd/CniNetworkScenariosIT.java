@@ -73,6 +73,17 @@ class CniNetworkScenariosIT {
         return client.containers().exec(id, List.of("/bin/sh", "-c", command));
     }
 
+    /** Whether the container can open a TCP connection out. Not ICMP: many hosts drop it. */
+    private static boolean reachesInternet(String id) {
+        return sh(id, "nc -z -w 5 1.1.1.1 443 >/dev/null 2>&1 && echo OK || echo NO")
+                .stdout().trim().equals("OK");
+    }
+
+    private static boolean pings(String id, String address) {
+        return sh(id, "ping -c 1 -W 3 " + address + " >/dev/null 2>&1 && echo OK || echo NO")
+                .stdout().trim().equals("OK");
+    }
+
     private static String addressOf(String id, String ifName) {
         String out = sh(id, "ip -4 addr show " + ifName).stdout();
         var m = IPV4.matcher(out);
@@ -145,8 +156,9 @@ class CniNetworkScenariosIT {
         // reachability by address and by name are separate things, and this is the difference.
         onNetwork("nanofaas-test", id -> {
             assertThat(sh(id, "cat /etc/resolv.conf").stdout().trim()).isEmpty();
-            assertThat(sh(id, "ping -c 1 -W 3 1.1.1.1 >/dev/null 2>&1 && echo OK || echo NO")
-                    .stdout().trim()).isEqualTo("OK");
+            assertThat(reachesInternet(id))
+                    .as("reachability by address and by name are separate things")
+                    .isTrue();
         });
     }
 
@@ -156,10 +168,9 @@ class CniNetworkScenariosIT {
     @Timeout(300)
     void aNetworkWithADefaultRouteReachesTheInternet() {
         onNetwork("nanofaas-test", id ->
-                assertThat(sh(id, "ping -c 2 -W 3 1.1.1.1 >/dev/null 2>&1 && echo OK || echo NO")
-                        .stdout().trim())
+                assertThat(reachesInternet(id))
                         .as("ipMasq plus a default route is what makes egress work")
-                        .isEqualTo("OK"));
+                        .isTrue());
     }
 
     @Test
@@ -167,10 +178,9 @@ class CniNetworkScenariosIT {
     void aNetworkWithoutADefaultRouteDoesNot() {
         onNetwork("nanofaas-isolated", id -> {
             assertThat(sh(id, "ip route").stdout()).doesNotContain("default");
-            assertThat(sh(id, "ping -c 1 -W 3 1.1.1.1 >/dev/null 2>&1 && echo OK || echo NO")
-                    .stdout().trim())
+            assertThat(reachesInternet(id))
                     .as("no default route means no egress, which is the point of this network")
-                    .isEqualTo("NO");
+                    .isFalse();
         });
     }
 
@@ -179,12 +189,18 @@ class CniNetworkScenariosIT {
     void containersOnDifferentNetworksCannotReachEachOther() {
         onNetwork("nanofaas-test", first -> {
             String address = addressOf(first, "eth0");
-            onNetwork("nanofaas-isolated", second ->
-                    assertThat(sh(second, "ping -c 1 -W 3 " + address + " >/dev/null 2>&1 && echo OK || echo NO")
-                            .stdout().trim())
-                            .as("separate bridges are separate broadcast domains; %s must be unreachable",
-                                    address)
-                            .isEqualTo("NO"));
+            onNetwork("nanofaas-isolated", second -> {
+                // Paired with a positive control: an environment that dropped all ICMP would
+                // satisfy the assertion below for entirely the wrong reason.
+                String ownGateway = addressOf(second, "eth0").replaceAll("\\.\\d+$", ".1");
+                assertThat(pings(second, ownGateway))
+                        .as("ICMP works on this host, so failing to reach %s means something", address)
+                        .isTrue();
+
+                assertThat(pings(second, address))
+                        .as("separate bridges are separate broadcast domains")
+                        .isFalse();
+            });
         });
     }
 
