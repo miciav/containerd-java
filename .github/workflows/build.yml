@@ -174,6 +174,21 @@ jobs:
         working-directory: containerd-java
         run: sudo chown -R "$(id -u):$(id -g)" build .gradle
 
+      # The CNI tests skip themselves when the plugins, the socket or the network config are not
+      # there. All three are installed above, so a skip means one of those steps quietly did not
+      # work — and the task would still be green having tested nothing.
+      - name: Fail if the CNI tests were skipped or did not run
+        working-directory: containerd-java
+        run: |
+          set -euo pipefail
+          results=build/test-results/cniIntegrationTest
+          [ -d "$results" ] || { echo "::error::no CNI test results at $results"; exit 1; }
+          total=$(grep -ho 'tests="[0-9]*"' "$results"/*.xml | grep -o '[0-9]*' | paste -sd+ | bc)
+          skipped=$(grep -ho 'skipped="[0-9]*"' "$results"/*.xml | grep -o '[0-9]*' | paste -sd+ | bc)
+          echo "CNI tests: ${total} run, ${skipped} skipped"
+          [ "$total" -gt 0 ] || { echo "::error::no CNI tests ran"; exit 1; }
+          [ "$skipped" -eq 0 ] || { echo "::error::${skipped} CNI tests skipped"; exit 1; }
+
       - name: Build the example as a native image
         working-directory: containerd-java
         env:
