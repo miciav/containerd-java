@@ -246,8 +246,13 @@ that would otherwise leave a machine running.
 uv venv .venv-e2e && uv pip install --python .venv-e2e \
     /path/to/sonata "/path/to/sonata/packages/sonata-tasks[multipass]"
 .venv-e2e/bin/python e2e/containerd_java_e2e.py
-KEEP_VM=1 .venv-e2e/bin/python e2e/containerd_java_e2e.py   # leave the VM up for a second look
 ```
+
+[docs/end-to-end.md](docs/end-to-end.md) covers the rest: what each unit does, the environment
+variables (including `E2E_ARCH`, which must be set on an x86-64 host), how to keep the VM for a
+second look and clean it up afterwards, how to run the demo on its own against a local containerd,
+and the obstacles — AppArmor and unprivileged user namespaces, `user.home` inside them — that
+anyone reproducing this by hand will meet.
 
 The demo it runs is `src/e2e`, a plain application built on the two libraries: it pulls an image,
 starts a pair of containers on a shared network and has one reach the other by name, reads logs,
@@ -497,6 +502,8 @@ the plugin knows the source sets, compiled classes and test reports without bein
 
 - [CHANGELOG.md](CHANGELOG.md) — what changed in each release.
 - [docs/spec.md](docs/spec.md) — the specification this implementation is written against.
+- [docs/end-to-end.md](docs/end-to-end.md) — running the end-to-end scenario: the sonata-engine
+  workflow that builds a VM, installs rootless containerd and crun, and runs the demo against it.
 - Javadoc: `./gradlew javadoc`, then open `build/docs/javadoc/index.html`. It covers the public
   API (`io.nanofaas.containerd` and its `spi` package); the `internal` package and the generated
   protobuf stubs are deliberately excluded, since neither is API. The javadoc build is strict —

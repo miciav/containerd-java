@@ -12,8 +12,15 @@ and destroyed after it is the only way to know the result came from the librarie
 something the host happened to have.
 
 Run with:
-    uv run --project ~/Documenti/sonata python e2e/containerd_java_e2e.py
-    KEEP_VM=1 ... to leave the VM up for a second look
+    uv venv .venv-e2e
+    uv pip install --python .venv-e2e /path/to/sonata \
+        "/path/to/sonata/packages/sonata-tasks[multipass]"
+    .venv-e2e/bin/python e2e/containerd_java_e2e.py
+
+The multipass extra is what supplies the Multipass SDK and pydantic; without it the import of
+sonata_tasks.vm.models fails. See docs/end-to-end.md for the environment variables -- E2E_ARCH
+has to be set on an x86-64 host -- and for keeping the VM with KEEP_VM=1, which skips the release
+and leaves cleanup to you.
 """
 
 from __future__ import annotations
