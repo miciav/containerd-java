@@ -114,9 +114,9 @@ public final class OciSpecBuilder {
         return toAny(SPEC_TYPE_URL, root.build());
     }
 
-    /** Builds the process spec for exec, with no environment inherited from the container. */
+    /** Builds the process spec for exec, with nothing inherited from the container. */
     public static Any buildExecSpec(List<String> command, Map<String, String> environment, String workingDir) {
-        return buildExecSpec(command, environment, workingDir, List.of(), null);
+        return buildExecSpec(command, environment, workingDir, List.of(), null, null);
     }
 
     /**
@@ -129,12 +129,20 @@ public final class OciSpecBuilder {
      *        the way {@code docker exec} does: a command run inside a container should see the
      *        same environment the container does, or nothing that image ships is on its PATH
      * @param containerWorkingDir the container's working directory, used when the caller sets none
+     * @param containerRlimits the container's own {@code rlimits}, carried over so a command run
+     *        inside a container runs under the limits that container was created with. Without
+     *        this the runtime falls back to its own default (1024 open files, typically), so
+     *        {@code openFilesLimit} would silently apply to the entrypoint and not to an exec.
      * @return the process spec
      */
     static Any buildExecSpec(List<String> command, Map<String, String> environment, String workingDir,
-                             List<String> containerEnv, String containerWorkingDir) {
+                             List<String> containerEnv, String containerWorkingDir,
+                             Value containerRlimits) {
         String cwd = workingDir != null ? workingDir : containerWorkingDir;
         Struct.Builder process = process(command, environment, cwd, null, containerEnv, List.of());
+        if (containerRlimits != null) {
+            process.putFields("rlimits", containerRlimits);
+        }
         return toAny(PROCESS_TYPE_URL, process.build());
     }
 

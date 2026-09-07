@@ -17,13 +17,22 @@ import java.util.List;
  *
  * @param env the container process's environment as {@code KEY=VALUE} entries
  * @param workingDir the container process's working directory, {@code null} if unset
+ * @param rlimits the container process's {@code rlimits} array exactly as it was stored, or
+ *        {@code null} if the spec carries none. Kept as the raw value rather than unpacked into
+ *        fields so that every limit the container has travels to an exec, including ones this
+ *        library does not yet know how to set.
  */
-record StoredSpec(List<String> env, String workingDir) {
+record StoredSpec(List<String> env, String workingDir, Value rlimits) {
 
-    static final StoredSpec EMPTY = new StoredSpec(List.of(), null);
+    static final StoredSpec EMPTY = new StoredSpec(List.of(), null, null);
 
     StoredSpec {
         env = List.copyOf(env);
+    }
+
+    /** A spec whose limits are unknown, which is what a caller with only env and cwd has. */
+    StoredSpec(List<String> env, String workingDir) {
+        this(env, workingDir, null);
     }
 
     /** Parses the stored spec, yielding {@link #EMPTY} for anything it cannot read. */
@@ -49,6 +58,8 @@ record StoredSpec(List<String> env, String workingDir) {
             }
         }
         String cwd = process.getFieldsOrDefault("cwd", Value.getDefaultInstance()).getStringValue();
-        return new StoredSpec(env, cwd.isEmpty() ? null : cwd);
+        Value rlimits = process.getFieldsOrDefault("rlimits", Value.getDefaultInstance());
+        return new StoredSpec(env, cwd.isEmpty() ? null : cwd,
+                rlimits.getKindCase() == Value.KindCase.LIST_VALUE ? rlimits : null);
     }
 }

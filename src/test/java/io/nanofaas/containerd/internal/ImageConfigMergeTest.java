@@ -134,7 +134,7 @@ class ImageConfigMergeTest {
                 "/opt/sonarqube");
 
         String json = OciSpecBuilder.buildExecSpec(List.of("env"), Map.of(), null,
-                container.env(), container.workingDir()).getValue().toStringUtf8();
+                container.env(), container.workingDir(), container.rlimits()).getValue().toStringUtf8();
 
         assertThat(json).contains("\"PGDATA=/var/lib/postgresql/data\"")
                 .contains("\"PATH=/opt/java/openjdk/bin\"")
@@ -146,10 +146,24 @@ class ImageConfigMergeTest {
         var container = new StoredSpec(List.of("MODE=container"), "/opt/sonarqube");
 
         String json = OciSpecBuilder.buildExecSpec(List.of("env"), Map.of("MODE", "exec"), "/tmp",
-                container.env(), container.workingDir()).getValue().toStringUtf8();
+                container.env(), container.workingDir(), container.rlimits()).getValue().toStringUtf8();
 
         assertThat(json).contains("\"MODE=exec\"").doesNotContain("MODE=container")
                 .contains("\"cwd\":\"/tmp\"");
+    }
+
+    @Test
+    void anExecInheritsTheContainersResourceLimits() {
+        // The limit the caller asked for has to apply to everything running in the container, not
+        // just to its entrypoint. The runtime's own default (1024 open files) is what fills the
+        // gap otherwise, and nothing reports that it did.
+        var spec = ContainerSpec.builder().id("limited").image("alpine").openFilesLimit(4096).build();
+        var stored = StoredSpec.parse(OciSpecBuilder.buildContainerSpec(spec, ImageConfig.EMPTY));
+
+        String json = OciSpecBuilder.buildExecSpec(List.of("sh"), Map.of(), null,
+                stored.env(), stored.workingDir(), stored.rlimits()).getValue().toStringUtf8();
+
+        assertThat(json).contains("RLIMIT_NOFILE").contains("4096");
     }
 
     @Test

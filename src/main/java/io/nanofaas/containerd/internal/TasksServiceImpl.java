@@ -191,8 +191,8 @@ public final class TasksServiceImpl implements Tasks {
     }
 
     /**
-     * Creates an exec process, inheriting environment and working directory from the container's
-     * own stored spec so the command sees what the container sees.
+     * Creates an exec process, inheriting environment, working directory and resource limits from
+     * the container's own stored spec so the command sees what the container sees.
      */
     void exec(String containerId, String execId, ExecSpec spec, IoManager.FifoSet fifos,
               StoredSpec container) {
@@ -203,7 +203,7 @@ public final class TasksServiceImpl implements Tasks {
                 .setStdout(fifos.stdout().toString())
                 .setStderr(fifos.stderr().toString())
                 .setSpec(OciSpecBuilder.buildExecSpec(spec.command(), spec.environment(), spec.workingDir(),
-                        container.env(), container.workingDir()))
+                        container.env(), container.workingDir(), container.rlimits()))
                 .build();
         log.debug("exec create: containerId={} execId={}", containerId, execId);
         try {
@@ -231,6 +231,36 @@ public final class TasksServiceImpl implements Tasks {
             return toExitStatus(response.getExitStatus(), response.hasExitedAt(), response.getExitedAt());
         } catch (StatusRuntimeException e) {
             throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.TASK);
+        }
+    }
+
+    /**
+     * Tells the shim the caller is done writing to a process's stdin.
+     *
+     * <p>Closing our end of the stdin FIFO is not enough to give the process EOF: the shim opens
+     * the FIFO read-write and so holds a write end of its own, which keeps the pipe open no matter
+     * what the client does. A process that reads until EOF — {@code cat}, a shell reading a here
+     * doc, anything piped into — would block forever. This RPC is what actually closes it, and it
+     * is what {@code ctr} and containerd's Go client do after writing stdin.
+     *
+     * @param containerId the container the process runs in
+     * @param execId the exec process, or {@code null} for the container's own init process
+     */
+    public void closeStdin(String containerId, String execId) {
+        var request = containerd.services.tasks.v1.CloseIORequest.newBuilder()
+                .setContainerId(containerId)
+                .setStdin(true);
+        if (execId != null) {
+            request.setExecId(execId);
+        }
+        try {
+            stub.closeIO(request.build());
+        } catch (StatusRuntimeException e) {
+            // The process may have exited on its own between the write and this call, which is a
+            // normal race and not a failure: there is no stdin left to close.
+            if (e.getStatus().getCode() != io.grpc.Status.Code.NOT_FOUND) {
+                throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.TASK);
+            }
         }
     }
 

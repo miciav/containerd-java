@@ -66,6 +66,9 @@ public final class ContainersServiceImpl implements Containers {
     /** How long {@link #close()} waits for in-flight exec IO before abandoning it. */
     static final java.time.Duration IO_SHUTDOWN_TIMEOUT = java.time.Duration.ofSeconds(5);
 
+    /** How long the stdin task gets to finish before it is treated as stuck in {@code open(2)}. */
+    private static final java.time.Duration STDIN_GRACE = java.time.Duration.ofSeconds(5);
+
     private final containerd.services.containers.v1.ContainersGrpc.ContainersBlockingStub stub;
     private final SnapshotManager snapshots;
     private final LeaseManager leases;
@@ -632,12 +635,25 @@ public final class ContainersServiceImpl implements Containers {
         try {
             tasks.exec(id, execId, spec, fifos, container);
             int pid = tasks.startExec(id, execId);
-            // Always write and close stdin, even with nothing to send: the write end must be
-            // opened and closed for the process to see EOF. Skipping it (as this did when
-            // ExecSpec.stdin() was null) leaves a process that reads stdin blocked forever.
+            // Always send stdin, even with nothing to write: a process that reads stdin needs
+            // EOF to get going, and skipping this (as this did when ExecSpec.stdin() was null)
+            // leaves it blocked forever.
             byte[] stdin = spec.stdin() == null
                     ? new byte[0] : spec.stdin().getBytes(StandardCharsets.UTF_8);
-            stdinFuture = ioExecutor.submit(() -> IoManager.writeFifo(fifos.stdin(), stdin));
+            stdinFuture = ioExecutor.submit(() -> {
+                try {
+                    IoManager.writeFifo(fifos.stdin(), stdin);
+                } finally {
+                    // Closing our write end is NOT what gives the process EOF: the shim opens the
+                    // FIFO read-write and holds a write end of its own, so the pipe stays open
+                    // whatever the client does. Only CloseIO closes it. Without this an exec of
+                    // anything that reads to EOF hangs here, and so does this thread's reader,
+                    // because the process never exits and stdout never ends. In a finally because
+                    // a failed write still has to be followed by EOF: otherwise the failure is a
+                    // hang rather than an error, which is far harder to read.
+                    tasks.closeStdin(id, execId);
+                }
+            });
             String stdout = stdoutFuture.get();
             String stderr = stderrFuture.get();
             ExitStatus status = tasks.waitExec(id, execId);
@@ -662,7 +678,11 @@ public final class ContainersServiceImpl implements Containers {
                 unblockReader(fifos.stderr());
             }
             // Mirror image: a writer still blocked in open(2) needs a read end to pair with.
-            if (stdinFuture != null && !stdinFuture.isDone()) {
+            // "Not finished" is not the same thing as "blocked in open", though, and the two must
+            // not be confused here: pairing a read end with a writer that has already closed
+            // blocks this thread for good, because nothing will ever open the other side. So give
+            // the task a moment to finish on its own, and only treat it as stuck if it does not.
+            if (stdinFuture != null && !awaitStdin(id, execId, stdinFuture)) {
                 unblockWriter(fifos.stdin());
             }
             try {
@@ -671,6 +691,32 @@ public final class ContainersServiceImpl implements Containers {
                 log.warn("failed to delete exec process {} for container {}", execId, id, e);
             }
             IoManager.cleanup(fifos);
+        }
+    }
+
+    /**
+     * Waits a short while for the stdin task to finish.
+     *
+     * @return {@code true} if it finished (however it finished), {@code false} if it is still
+     *         running, which at this point means it is blocked in {@code open(2)} waiting for a
+     *         reader that is never coming
+     */
+    private boolean awaitStdin(String id, String execId, java.util.concurrent.Future<?> stdinFuture) {
+        try {
+            stdinFuture.get(STDIN_GRACE.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
+            return true;
+        } catch (java.util.concurrent.TimeoutException e) {
+            return false;
+        } catch (ExecutionException e) {
+            // Nothing else waits on this future, so a failed write would otherwise vanish. It does
+            // not fail the exec — the process ran — but it explains truncated input, which the
+            // caller has no other way to find out about.
+            log.warn("writing stdin failed for exec {} of container {}; the process ran but may"
+                    + " have seen less input than was sent", execId, id, e.getCause());
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return true;
         }
     }
 
