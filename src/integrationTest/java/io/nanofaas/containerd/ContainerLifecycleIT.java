@@ -100,4 +100,34 @@ class ContainerLifecycleIT extends ContainerdConnectionIT {
             client.containers().remove(id, RemoveOptions.builder().removeSnapshot(true).force(true).build());
         }
     }
+
+    @Test
+    @Timeout(180)
+    void runsUnderCrunAsWellAsRunc() throws Exception {
+        // The runtime this library names in its own specification, and which nothing exercised:
+        // the shim runs runc unless binary_name says otherwise, so a config crun refuses would
+        // pass every other test here. It did. crun before 1.14.3 rejects any config declaring OCI
+        // 1.2.x, which this library declared without using anything from it.
+        org.junit.jupiter.api.Assumptions.assumeTrue(
+                java.nio.file.Files.isExecutable(java.nio.file.Path.of("/usr/bin/crun")),
+                "crun is not installed");
+
+        String id = "it-crun-" + java.util.UUID.randomUUID();
+        try (var crunClient = io.nanofaas.containerd.spi.ContainerdClient.builder()
+                .socketPath(SOCKET).namespace("nanofaas-it")
+                .runtimeBinaryName("crun")
+                .build()) {
+            crunClient.images().pull(ALPINE);
+            crunClient.containers().create(ContainerSpec.builder().id(id).image(ALPINE)
+                    .command(List.of("/bin/sh", "-c", "while true; do sleep 5; done")).build());
+            try {
+                crunClient.containers().start(id);
+                assertThat(crunClient.containers().exec(id, List.of("/bin/sh", "-c", "echo from-crun"))
+                        .stdout()).contains("from-crun");
+            } finally {
+                crunClient.containers().remove(id,
+                        RemoveOptions.builder().removeSnapshot(true).force(true).build());
+            }
+        }
+    }
 }

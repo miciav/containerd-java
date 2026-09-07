@@ -25,7 +25,26 @@ public final class OciSpecBuilder {
     public static final String SPEC_TYPE_URL = "types.containerd.io/opencontainers/runtime-spec/1/Spec";
     public static final String PROCESS_TYPE_URL = "types.containerd.io/opencontainers/runtime-spec/1/Process";
 
-    static final String SPEC_VERSION = "1.2.0";
+    /**
+     * The OCI runtime spec version this config declares.
+     *
+     * <p>1.0.0 because it is accurate: every field built here exists in 1.0, and nothing uses a
+     * feature added since. This declared 1.2.0, which was both more than was true and, in
+     * practice, unusable — crun before 1.14.3 has a version-check bug and refuses any config
+     * declaring 1.2.x with "unknown version specified" (fixed upstream in crun 1.14.3, and the
+     * same bug bites podman and singularity).
+     *
+     * <p>Declaring the version actually used sidesteps that entirely rather than requiring a crun
+     * new enough to tolerate a claim this library never needed to make. Raise it only alongside a
+     * field that genuinely requires the newer spec.
+     *
+     * <p>That this went unnoticed is worth recording: containerd's runc-v2 shim runs runc unless
+     * binary_name says otherwise, and runc accepts 1.2.x, so the whole integration suite passed
+     * while crun — the runtime this library's own specification names — could not start a single
+     * container. {@code ContainerLifecycleIT.runsUnderCrunAsWellAsRunc} is the test that was
+     * missing.
+     */
+    static final String SPEC_VERSION = "1.0.0";
 
     // Not a path this code opens: it is the PATH given to the container's process, the same
     // default docker and ctr use.

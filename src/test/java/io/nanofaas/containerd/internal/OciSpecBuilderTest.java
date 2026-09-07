@@ -50,7 +50,9 @@ class OciSpecBuilderTest {
                 .user("1000:1000")
                 .build()));
 
-        assertThat(spec.getFieldsOrThrow("ociVersion").getStringValue()).isEqualTo("1.2.0");
+        // 1.0.0, not a later version: every field built here exists in 1.0, and declaring more
+        // than is true is not free — crun before 1.14.3 refuses any config claiming 1.2.x.
+        assertThat(spec.getFieldsOrThrow("ociVersion").getStringValue()).isEqualTo("1.0.0");
 
         var process = spec.getFieldsOrThrow("process").getStructValue();
         assertThat(process.getFieldsOrThrow("cwd").getStringValue()).isEqualTo("/work");
