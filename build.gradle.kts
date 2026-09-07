@@ -152,6 +152,38 @@ val cniJar = tasks.register<Jar>("cniJar") {
 }
 tasks.named("assemble") { dependsOn(cniJar) }
 
+// ---- end-to-end demo application ----
+// Exercises both libraries against a real containerd, and is what the Multipass scenario runs
+// inside the VM. Its own source set so it never reaches a consumer, and shipped as a directory of
+// jars rather than a fat one: gRPC finds its providers through META-INF/services files that a
+// naive merge would silently drop, and the failure would look like a broken channel.
+val e2e = sourceSets.create("e2e")
+
+e2e.compileClasspath += sourceSets.main.get().output + cni.output +
+        configurations["runtimeClasspath"] + configurations["cniRuntimeClasspath"]
+e2e.runtimeClasspath += sourceSets.main.get().output + cni.output +
+        configurations["runtimeClasspath"] + configurations["cniRuntimeClasspath"]
+
+dependencies {
+    "e2eRuntimeOnly"("org.slf4j:slf4j-simple:$slf4jVersion")
+}
+
+tasks.register<Sync>("e2eDistribution") {
+    description = "Assembles the end-to-end demo and everything it needs to run"
+    group = "build"
+    into(layout.buildDirectory.dir("e2e-dist"))
+    // The e2e and cni classpaths overlap; the same jar from either is the same file.
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    // The whole runtime classpath of the source set, not just its own configuration: a custom
+    // source set inherits none of main's dependencies, so asking the configuration alone yields
+    // a handful of jars and a NoClassDefFoundError at the first gRPC call.
+    from(e2e.output) { into("classes") }
+    from(sourceSets.main.get().output) { into("classes") }
+    from(cni.output) { into("classes") }
+    from(e2e.runtimeClasspath.filter { it.isFile && it.name.endsWith(".jar") }) { into("lib") }
+    from(configurations["e2eRuntimeClasspath"].filter { it.name.endsWith(".jar") }) { into("lib") }
+}
+
 // ---- integration tests (require a real containerd; not part of `check`) ----
 val integrationTest = sourceSets.create("integrationTest")
 
