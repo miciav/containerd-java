@@ -38,6 +38,20 @@ public final class ContainersServiceImpl implements Containers {
      */
     static final String NETWORK_LABEL = "io.nanofaas.containerd/cni.network";
 
+    /**
+     * The host file bind-mounted over the container's /etc/resolv.conf. It has to be declared at
+     * create time, but its contents are only known after the network is attached, which happens
+     * once the task is running — so an empty file is mounted and filled in later. That is the same
+     * trick docker uses, and the reason a bind mount is used rather than writing into the image:
+     * most images have no /etc/resolv.conf at all, and there is no writable rootfs to put one in
+     * until the container is already running.
+     */
+    static final String RESOLV_CONF_LABEL = "io.nanofaas.containerd/dns.resolvconf";
+
+    /** Where per-container files this library owns are kept. */
+    private static final Path STATE_DIR =
+            Path.of(System.getProperty("java.io.tmpdir"), "containerd-java-state");
+
     /** Default grace period between SIGTERM and SIGKILL in {@link #stop(String)}. */
     static final java.time.Duration DEFAULT_STOP_TIMEOUT = java.time.Duration.ofSeconds(10);
 
@@ -117,7 +131,7 @@ public final class ContainersServiceImpl implements Containers {
                     .setImage(spec.image())
                     .setSnapshotter(snapshotter)
                     .setSnapshotKey(spec.id())
-                    .setSpec(OciSpecBuilder.buildContainerSpec(spec, imageConfig))
+                    .setSpec(OciSpecBuilder.buildContainerSpec(spec, imageConfig, networkMounts(spec)))
                     .setRuntime(containerd.services.containers.v1.Container.Runtime.newBuilder()
                             .setName(runtimeName))
                     // User labels first: the GC ref must win, because losing it would let
@@ -173,7 +187,38 @@ public final class ContainersServiceImpl implements Containers {
 
     /** The network label, so detach can find the network long after create decided it. */
     private static java.util.Map<String, String> networkLabels(ContainerSpec spec) {
-        return spec.network() == null ? java.util.Map.of() : java.util.Map.of(NETWORK_LABEL, spec.network());
+        if (spec.network() == null) {
+            return java.util.Map.of();
+        }
+        return java.util.Map.of(NETWORK_LABEL, spec.network(),
+                RESOLV_CONF_LABEL, resolvConfPath(spec.id()).toString());
+    }
+
+    private static Path resolvConfPath(String containerId) {
+        return STATE_DIR.resolve(containerId).resolve("resolv.conf");
+    }
+
+    /**
+     * Creates the empty resolv.conf that will be mounted into the container, and the mount for it.
+     *
+     * <p>World-readable because the container's process may run as any uid, and it is a file whose
+     * whole content this library wrote.
+     */
+    private static List<ContainerSpec.MountSpec> networkMounts(ContainerSpec spec) {
+        if (spec.network() == null) {
+            return List.of();
+        }
+        Path resolvConf = resolvConfPath(spec.id());
+        try {
+            Files.createDirectories(resolvConf.getParent());
+            Files.writeString(resolvConf, "");
+            resolvConf.toFile().setReadable(true, false);
+        } catch (IOException e) {
+            throw new ContainerdException("could not prepare " + resolvConf
+                    + " for container " + spec.id(), e);
+        }
+        return List.of(new ContainerSpec.MountSpec("/etc/resolv.conf", "bind",
+                resolvConf.toString(), List.of("rbind", "ro")));
     }
 
     /**
@@ -250,6 +295,26 @@ public final class ContainersServiceImpl implements Containers {
         return readLog(Path.of(path));
     }
 
+    /** Removes the per-container files this library created, such as the mounted resolv.conf. */
+    private static void removeStateDirectory(String id) {
+        Path dir = STATE_DIR.resolve(id);
+        if (!Files.isDirectory(dir)) {
+            return;
+        }
+        try (var entries = Files.list(dir)) {
+            entries.forEach(entry -> {
+                try {
+                    Files.deleteIfExists(entry);
+                } catch (IOException ignored) {
+                    // best effort
+                }
+            });
+            Files.deleteIfExists(dir);
+        } catch (IOException e) {
+            log.warn("could not remove the state directory {}", dir, e);
+        }
+    }
+
     /** Reads a log file, treating "not there yet" as empty: the shim creates it when it first writes. */
     private static String readLog(Path path) {
         try {
@@ -323,6 +388,7 @@ public final class ContainersServiceImpl implements Containers {
             if (options.removeSnapshot() && !container.getSnapshotKey().isEmpty()) {
                 snapshots.remove(container.getSnapshotter(), container.getSnapshotKey()); // idempotent
             }
+            removeStateDirectory(id);
         } catch (StatusRuntimeException e) {
             throw StatusExceptionMapper.map(e, StatusExceptionMapper.ResourceKind.CONTAINER);
         }
@@ -375,7 +441,7 @@ public final class ContainersServiceImpl implements Containers {
         }
         try {
             log.debug("attaching container {} to network {} (pid={})", id, attachTo, pid);
-            network.attach(id, attachTo, pid);
+            writeResolvConf(id, network.attach(id, attachTo, pid));
         } catch (RuntimeException e) {
             detachNetwork(id, pid);
             throw new ContainerStartException("container " + id + " started but could not be attached"
@@ -398,6 +464,34 @@ public final class ContainersServiceImpl implements Containers {
         } catch (RuntimeException e) {
             log.warn("could not detach container {} from network {}; an address may be left"
                     + " allocated on the host", id, detachFrom, e);
+        }
+    }
+
+    /**
+     * Writes the network's DNS into the file mounted at the container's /etc/resolv.conf.
+     *
+     * <p>CNI reports DNS but does not apply it — that is the runtime's job, and without this a
+     * container has an address and a route and still cannot resolve a single name, which is a more
+     * confusing kind of broken than having no network at all.
+     */
+    private void writeResolvConf(String id, io.nanofaas.containerd.NetworkAttachment attachment) {
+        if (attachment == null) {
+            return;
+        }
+        String contents = attachment.toResolvConf();
+        if (contents.isEmpty()) {
+            log.debug("network for {} reported no DNS; leaving its resolv.conf empty", id);
+            return;
+        }
+        String path = containerOf(id).getLabelsMap().get(RESOLV_CONF_LABEL);
+        if (path == null) {
+            return;
+        }
+        try {
+            Files.writeString(Path.of(path), contents);
+        } catch (IOException e) {
+            throw new ContainerdException("could not write the DNS configuration for " + id
+                    + " to " + path, e);
         }
     }
 

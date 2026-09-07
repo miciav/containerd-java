@@ -143,6 +143,8 @@ jobs:
             "https://github.com/containernetworking/plugins/releases/download/${version}/cni-plugins-linux-${arch}-${version}.tgz"
           sudo mkdir -p /opt/cni/bin /etc/cni/net.d
           sudo tar -xzf cni.tgz -C /opt/cni/bin
+          # Three networks, because the scenarios are about the differences between them:
+          # routed without DNS, routed with DNS, and isolated with neither.
           sudo tee /etc/cni/net.d/10-nanofaas.conflist > /dev/null <<'JSON'
           {
             "cniVersion": "1.0.0",
@@ -151,6 +153,33 @@ jobs:
               {"type": "bridge", "bridge": "cni-nanofaas0", "isGateway": true, "ipMasq": true,
                "ipam": {"type": "host-local", "ranges": [[{"subnet": "10.99.0.0/16"}]],
                         "routes": [{"dst": "0.0.0.0/0"}]}},
+              {"type": "firewall", "backend": "iptables"},
+              {"type": "loopback"}
+            ]
+          }
+          JSON
+          sudo tee /etc/cni/net.d/20-dnstest.conflist > /dev/null <<'JSON'
+          {
+            "cniVersion": "1.0.0",
+            "name": "dns-test",
+            "plugins": [
+              {"type": "bridge", "bridge": "cni-dns0", "isGateway": true, "ipMasq": true,
+               "ipam": {"type": "host-local", "ranges": [[{"subnet": "10.98.0.0/16"}]],
+                        "routes": [{"dst": "0.0.0.0/0"}]},
+               "dns": {"nameservers": ["10.98.0.1", "1.1.1.1"], "search": ["nanofaas.local"],
+                       "domain": "nanofaas.local"}},
+              {"type": "firewall", "backend": "iptables"},
+              {"type": "loopback"}
+            ]
+          }
+          JSON
+          sudo tee /etc/cni/net.d/30-isolated.conflist > /dev/null <<'JSON'
+          {
+            "cniVersion": "1.0.0",
+            "name": "nanofaas-isolated",
+            "plugins": [
+              {"type": "bridge", "bridge": "cni-isolated0", "isGateway": true,
+               "ipam": {"type": "host-local", "ranges": [[{"subnet": "10.97.0.0/16"}]]}},
               {"type": "firewall", "backend": "iptables"},
               {"type": "loopback"}
             ]

@@ -26,8 +26,10 @@ public interface ContainerNetwork {
      * @param containerId the container being attached
      * @param network the network name from {@link io.nanofaas.containerd.ContainerSpec}
      * @param pid the task's init process; its network namespace is {@code /proc/<pid>/ns/net}
+     * @return what the container got — the client writes the DNS into the container's
+     *         {@code /etc/resolv.conf} and hands the rest back to the caller
      */
-    void attach(String containerId, String network, int pid);
+    io.nanofaas.containerd.NetworkAttachment attach(String containerId, String network, int pid);
 
     /**
      * Detaches the container from its network, before its task goes away.

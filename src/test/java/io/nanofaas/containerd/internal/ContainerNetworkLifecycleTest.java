@@ -8,6 +8,7 @@ import io.grpc.stub.StreamObserver;
 import io.nanofaas.containerd.ContainerSpec;
 import io.nanofaas.containerd.ContainerStartException;
 import io.nanofaas.containerd.ContainerdException;
+import io.nanofaas.containerd.NetworkAttachment;
 import io.nanofaas.containerd.RemoveOptions;
 import io.nanofaas.containerd.spi.ContainerNetwork;
 import org.junit.jupiter.api.Test;
@@ -42,12 +43,15 @@ class ContainerNetworkLifecycleTest {
             this.events = events;
         }
 
+        volatile NetworkAttachment attachment = NetworkAttachment.EMPTY;
+
         @Override
-        public void attach(String containerId, String network, int pid) {
+        public NetworkAttachment attach(String containerId, String network, int pid) {
             events.add("attach:" + network + ":" + pid);
             if (failAttach) {
                 throw new IllegalStateException("no address left in the pool");
             }
+            return attachment;
         }
 
         @Override
@@ -391,5 +395,45 @@ class ContainerNetworkLifecycleTest {
                 .hostNetwork(true).network("mynet").build())
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("mutually exclusive");
+    }
+
+    @Test
+    void theNetworksDnsIsWrittenWhereTheContainerWillReadIt() throws Exception {
+        try (var fake = new FakeContainerd()) {
+            var net = new RecordingNetwork(fake.events);
+            net.attachment = new NetworkAttachment(
+                    List.of("10.99.0.7/16"), List.of("10.99.0.1"),
+                    List.of("10.99.0.1", "1.1.1.1"), List.of("nanofaas.local"), "nanofaas.local");
+            var containers = service(fake, net);
+            containers.create(networked());
+
+            containers.start("net-1");
+
+            // CNI reports DNS; applying it is the runtime's job, and without this a container has
+            // an address and a route and still cannot resolve a name.
+            String resolvConf = fake.stored.getLabelsMap()
+                    .get("io.nanofaas.containerd/dns.resolvconf");
+            assertThat(resolvConf).as("the file to fill in is decided at create time").isNotNull();
+            assertThat(java.nio.file.Files.readString(java.nio.file.Path.of(resolvConf)))
+                    .contains("nameserver 10.99.0.1")
+                    .contains("nameserver 1.1.1.1")
+                    .contains("search nanofaas.local");
+        }
+    }
+
+    @Test
+    void aNetworkThatReportsNoDnsLeavesTheFileEmpty() throws Exception {
+        try (var fake = new FakeContainerd()) {
+            var net = new RecordingNetwork(fake.events);
+            net.attachment = NetworkAttachment.EMPTY;
+            var containers = service(fake, net);
+            containers.create(networked());
+
+            containers.start("net-1");
+
+            String resolvConf = fake.stored.getLabelsMap()
+                    .get("io.nanofaas.containerd/dns.resolvconf");
+            assertThat(java.nio.file.Files.readString(java.nio.file.Path.of(resolvConf))).isEmpty();
+        }
     }
 }

@@ -69,6 +69,19 @@ public final class OciSpecBuilder {
      * @return the spec, ready to attach to a container
      */
     static Any buildContainerSpec(ContainerSpec spec, ImageConfig image) {
+        return buildContainerSpec(spec, image, List.of());
+    }
+
+    /**
+     * Builds the spec with mounts this library adds of its own, on top of the caller's.
+     *
+     * @param spec the caller's wishes
+     * @param image the image's configuration
+     * @param extraMounts mounts the library adds, such as the resolv.conf a networked container gets
+     * @return the spec, ready to attach to a container
+     */
+    static Any buildContainerSpec(ContainerSpec spec, ImageConfig image,
+                                  List<ContainerSpec.MountSpec> extraMounts) {
         Struct.Builder root = Struct.newBuilder()
                 .putFields("ociVersion", stringValue(SPEC_VERSION))
                 .putFields("process", structValue(buildProcess(spec, image).build()))
@@ -77,7 +90,7 @@ public final class OciSpecBuilder {
                         .putFields("readonly", boolValue(spec.readonlyRootfs()))
                         .build()))
                 .putFields("hostname", stringValue(spec.hostname() != null ? spec.hostname() : spec.id()))
-                .putFields("mounts", buildStandardMounts(spec))
+                .putFields("mounts", buildStandardMounts(spec, extraMounts))
                 .putFields("linux", structValue(buildLinux(spec).build()));
         return toAny(SPEC_TYPE_URL, root.build());
     }
@@ -192,7 +205,7 @@ public final class OciSpecBuilder {
         return b.build();
     }
 
-    private static Value buildStandardMounts(ContainerSpec spec) {
+    private static Value buildStandardMounts(ContainerSpec spec, List<ContainerSpec.MountSpec> extraMounts) {
         List<Value> mounts = new ArrayList<>(List.of(
                 mount("proc", "proc", "/proc", List.of(NOSUID, NOEXEC, NODEV)),
                 mount(TMPFS, TMPFS, "/dev", List.of(NOSUID, "strictatime", "mode=755", "size=65536k")),
@@ -203,6 +216,9 @@ public final class OciSpecBuilder {
                 mount("sysfs", "sysfs", "/sys", List.of(NOSUID, NOEXEC, NODEV, "ro")),
                 mount("cgroup", "cgroup", "/sys/fs/cgroup", List.of(NOSUID, NOEXEC, NODEV, "relatime", "ro"))));
         for (ContainerSpec.MountSpec m : spec.mounts()) {
+            mounts.add(mount(m.type(), m.source(), m.destination(), m.options()));
+        }
+        for (ContainerSpec.MountSpec m : extraMounts) {
             mounts.add(mount(m.type(), m.source(), m.destination(), m.options()));
         }
         return listValue(mounts);

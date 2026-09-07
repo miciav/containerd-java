@@ -387,10 +387,20 @@ wrong and expensive when you do: the namespace CNI configures is the task's, so 
 between the task starting and being torn down. Detaching after the task has gone finds nothing to
 undo and leaves an address allocated on the host that nothing will reclaim.
 
+DNS is applied, not merely reported. CNI hands back the nameservers a network specifies but does
+not configure anything with them; that is the runtime's job. A per-container `resolv.conf` is
+bind-mounted at `/etc/resolv.conf` and filled in once the network is attached — without it a
+container has an address and a route and cannot resolve a single name, which is a more confusing
+kind of broken than having no network at all.
+
 ```bash
 # The CNI tests need root and installed plugins, so they have their own task.
 sudo ./gradlew cniIntegrationTest
 ```
+
+The scenarios run against three networks that differ deliberately — routed without DNS, routed
+with DNS, isolated with neither — and assert from inside the container rather than from the CNI
+result, since a result saying an address was assigned is not the same as the container having one.
 
 ## GraalVM native image
 

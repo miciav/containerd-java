@@ -173,7 +173,7 @@ val integrationTestTask = tasks.register<Test>("integrationTest") {
     useJUnitPlatform()
     // The CNI tests need root and installed plugins, which the rest do not. Kept out so that a
     // skip in this task still means something is wrong.
-    filter { excludeTestsMatching("*CniNetworkIT") }
+    filter { excludeTestsMatching("io.nanofaas.containerd.Cni*IT") }
     systemProperty("io.nanofaas.containerd.socket", System.getProperty("io.nanofaas.containerd.socket", "/run/containerd/containerd.sock"))
     testLogging { events("failed", "skipped") }
 }
@@ -184,7 +184,9 @@ tasks.register<Test>("cniIntegrationTest") {
     testClassesDirs = integrationTest.output.classesDirs
     classpath = integrationTest.runtimeClasspath
     useJUnitPlatform()
-    filter { includeTestsMatching("*CniNetworkIT") }
+    // By name: every CNI test is Cni…IT, so a new one joins this task rather than silently
+    // landing in the other and failing there for want of root.
+    filter { includeTestsMatching("io.nanofaas.containerd.Cni*IT") }
     systemProperty("io.nanofaas.containerd.socket",
         System.getProperty("io.nanofaas.containerd.socket", "/run/containerd/containerd.sock"))
     testLogging { events("failed", "skipped") }

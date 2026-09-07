@@ -6,6 +6,8 @@ import io.libcni.NetworkConfigList;
 import io.libcni.RuntimeConf;
 import io.libcni.invoke.DefaultExec;
 import io.libcni.types.Result;
+import io.libcni.types.CurrentResult;
+import io.nanofaas.containerd.NetworkAttachment;
 import io.nanofaas.containerd.spi.ContainerNetwork;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,6 +15,7 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
@@ -60,10 +63,47 @@ public final class CniContainerNetwork implements ContainerNetwork {
     }
 
     @Override
-    public void attach(String containerId, String network, int pid) {
+    public NetworkAttachment attach(String containerId, String network, int pid) {
         NetworkConfigList list = configuration(network);
         Result result = cni.addNetworkList(list, runtimeConf(containerId, netnsOf(pid)));
-        log.debug("attached {} to {}: {}", containerId, network, result);
+        NetworkAttachment attachment = toAttachment(result);
+        log.debug("attached {} to {}: {}", containerId, network, attachment);
+        return attachment;
+    }
+
+    /**
+     * Reads the addresses and DNS out of a CNI result.
+     *
+     * <p>Anything the result does not carry comes back empty rather than null: a network that
+     * assigns no DNS is ordinary, and making every caller check for null would be the wrong
+     * trade. A result shape this code does not recognise yields {@link NetworkAttachment#EMPTY} —
+     * the container is attached either way, and the caller finding out nothing about it is better
+     * than a failed start.
+     */
+    private static NetworkAttachment toAttachment(Result result) {
+        if (!(result instanceof CurrentResult current)) {
+            log.warn("CNI returned {}, which this code cannot read; the container is attached but"
+                    + " nothing is known about its addressing", result == null ? "nothing"
+                    : result.getClass().getName());
+            return NetworkAttachment.EMPTY;
+        }
+        List<String> addresses = new ArrayList<>();
+        List<String> gateways = new ArrayList<>();
+        if (current.ips != null) {
+            for (var ip : current.ips) {
+                if (ip.address != null) {
+                    addresses.add(ip.address);
+                }
+                if (ip.gateway != null) {
+                    gateways.add(ip.gateway);
+                }
+            }
+        }
+        var dns = current.dns;
+        return new NetworkAttachment(addresses, gateways,
+                dns == null || dns.nameservers == null ? List.of() : dns.nameservers,
+                dns == null || dns.search == null ? List.of() : dns.search,
+                dns == null ? null : dns.domain);
     }
 
     @Override

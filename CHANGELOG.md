@@ -15,6 +15,15 @@ versions may carry breaking changes.
 - `ContainerNetwork`, the interface the core knows networking by. It names no CNI type, so the CNI
   implementation and its transitive Gson stay off the classpath of consumers who do not want them.
 
+- `NetworkAttachment`, what a container got when it was attached: addresses, gateways and DNS.
+  `ContainerNetwork.attach` returns one instead of discarding the CNI result.
+- **DNS now reaches the container.** CNI reports nameservers but never applies them — that is the
+  runtime's job — so until now a container had an address and a route and could not resolve a
+  single name. A per-container `resolv.conf` is bind-mounted at `/etc/resolv.conf` and filled in
+  once the network reports its DNS, which is how docker does it and the only way that works: most
+  images have no `/etc/resolv.conf` to write into, and there is no writable rootfs before the
+  container is running.
+
 ### Notes
 
 - The lifecycle is the library's to get right, not the caller's. A container's network namespace is
@@ -22,6 +31,11 @@ versions may carry breaking changes.
   after start and detaching before teardown — including for a task that already exited, whose
   address still has to be released. Nine tests assert the ordering of the calls, not merely that
   they happened.
+- Ten end-to-end scenarios run against real plugins across three networks that differ on purpose —
+  routed without DNS, routed with DNS, isolated with neither — and assert from inside the
+  container: the interface is up with an address from the right range, loopback works, names
+  resolve, egress works or does not according to the route, and containers on different networks
+  cannot reach each other.
 - Asking for a network without giving the client a `ContainerNetwork` is refused at create time
   rather than ignored: a container that asked to be on a network and silently is not is worse than
   one that never started. `hostNetwork` and `network` are likewise mutually exclusive.
