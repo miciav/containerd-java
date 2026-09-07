@@ -20,3 +20,8 @@ bin/
 
 # Logs
 *.log
+
+# Python (the end-to-end workflow and the venv used to run it)
+__pycache__/
+*.pyc
+.venv-e2e/
