@@ -387,6 +387,18 @@ wrong and expensive when you do: the namespace CNI configures is the task's, so 
 between the task starting and being torn down. Detaching after the task has gone finds nothing to
 undo and leaves an address allocated on the host that nothing will reclaim.
 
+```java
+ContainerdClient.builder()
+        .network(CniContainerNetwork.builder().build())
+        .stateDirectory(Path.of("/var/lib/nanofaas"))   // survives a reboot; the default does not
+        .build();
+```
+
+The state directory holds the per-container files this library owns, and the container's mount
+points into it. The default is under `java.io.tmpdir` because a default has to be writable by
+whoever is running; it is the wrong choice for a host that reboots with containers still running,
+which would leave them mounting a file that no longer exists.
+
 DNS is applied, not merely reported. CNI hands back the nameservers a network specifies but does
 not configure anything with them; that is the runtime's job. A per-container `resolv.conf` is
 bind-mounted at `/etc/resolv.conf` and filled in once the network is attached — without it a

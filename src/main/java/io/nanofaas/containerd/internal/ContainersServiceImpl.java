@@ -48,8 +48,16 @@ public final class ContainersServiceImpl implements Containers {
      */
     static final String RESOLV_CONF_LABEL = "io.nanofaas.containerd/dns.resolvconf";
 
-    /** Where per-container files this library owns are kept. */
-    private static final Path STATE_DIR =
+    /**
+     * Where per-container files this library owns are kept when the caller names no directory.
+     *
+     * <p>Under the temporary directory because it is the one place writable by whoever is running,
+     * which a default has to be. It is the wrong place for a host that reboots with a running
+     * container: the file bind-mounted into that container would be gone while the container still
+     * pointed at it. Anything long-lived should set
+     * {@link io.nanofaas.containerd.spi.ContainerdClient.Builder#stateDirectory}.
+     */
+    static final Path DEFAULT_STATE_DIR =
             Path.of(System.getProperty("java.io.tmpdir"), "containerd-java-state");
 
     /** Default grace period between SIGTERM and SIGKILL in {@link #stop(String)}. */
@@ -67,6 +75,7 @@ public final class ContainersServiceImpl implements Containers {
     private final String runtimeName;
     private final java.time.Duration stopTimeout;
     private final io.nanofaas.containerd.spi.ContainerNetwork network;
+    private final Path stateDirectory;
     private final ExecutorService ioExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     public ContainersServiceImpl(ManagedChannel channel, String snapshotter, String runtimeName, String runtimeBinaryName) {
@@ -81,7 +90,15 @@ public final class ContainersServiceImpl implements Containers {
     public ContainersServiceImpl(ManagedChannel channel, String snapshotter, String runtimeName,
                                  String runtimeBinaryName, java.time.Duration stopTimeout,
                                  io.nanofaas.containerd.spi.ContainerNetwork network) {
+        this(channel, snapshotter, runtimeName, runtimeBinaryName, stopTimeout, network, DEFAULT_STATE_DIR);
+    }
+
+    public ContainersServiceImpl(ManagedChannel channel, String snapshotter, String runtimeName,
+                                 String runtimeBinaryName, java.time.Duration stopTimeout,
+                                 io.nanofaas.containerd.spi.ContainerNetwork network,
+                                 Path stateDirectory) {
         this.network = network;
+        this.stateDirectory = stateDirectory;
         this.stub = containerd.services.containers.v1.ContainersGrpc.newBlockingStub(channel);
         this.snapshots = new SnapshotManager(channel);
         this.leases = new LeaseManager(channel);
@@ -186,7 +203,7 @@ public final class ContainersServiceImpl implements Containers {
     }
 
     /** The network label, so detach can find the network long after create decided it. */
-    private static java.util.Map<String, String> networkLabels(ContainerSpec spec) {
+    private java.util.Map<String, String> networkLabels(ContainerSpec spec) {
         if (spec.network() == null) {
             return java.util.Map.of();
         }
@@ -194,8 +211,8 @@ public final class ContainersServiceImpl implements Containers {
                 RESOLV_CONF_LABEL, resolvConfPath(spec.id()).toString());
     }
 
-    private static Path resolvConfPath(String containerId) {
-        return STATE_DIR.resolve(containerId).resolve("resolv.conf");
+    private Path resolvConfPath(String containerId) {
+        return stateDirectory.resolve(containerId).resolve("resolv.conf");
     }
 
     /**
@@ -204,7 +221,7 @@ public final class ContainersServiceImpl implements Containers {
      * <p>World-readable because the container's process may run as any uid, and it is a file whose
      * whole content this library wrote.
      */
-    private static List<ContainerSpec.MountSpec> networkMounts(ContainerSpec spec) {
+    private List<ContainerSpec.MountSpec> networkMounts(ContainerSpec spec) {
         if (spec.network() == null) {
             return List.of();
         }
@@ -214,8 +231,9 @@ public final class ContainersServiceImpl implements Containers {
             Files.writeString(resolvConf, "");
             resolvConf.toFile().setReadable(true, false);
         } catch (IOException e) {
-            throw new ContainerdException("could not prepare " + resolvConf
-                    + " for container " + spec.id(), e);
+            throw new ContainerdException("could not prepare " + resolvConf + " for container "
+                    + spec.id() + ". This is the client's state directory; point it somewhere"
+                    + " writable with ContainerdClient.builder().stateDirectory(...)", e);
         }
         return List.of(new ContainerSpec.MountSpec("/etc/resolv.conf", "bind",
                 resolvConf.toString(), List.of("rbind", "ro")));
@@ -296,8 +314,8 @@ public final class ContainersServiceImpl implements Containers {
     }
 
     /** Removes the per-container files this library created, such as the mounted resolv.conf. */
-    private static void removeStateDirectory(String id) {
-        Path dir = STATE_DIR.resolve(id);
+    private void removeStateDirectory(String id) {
+        Path dir = stateDirectory.resolve(id);
         if (!Files.isDirectory(dir)) {
             return;
         }

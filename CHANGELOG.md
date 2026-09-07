@@ -17,6 +17,11 @@ versions may carry breaking changes.
 
 - `NetworkAttachment`, what a container got when it was attached: addresses, gateways and DNS.
   `ContainerNetwork.attach` returns one instead of discarding the CNI result.
+- `ContainerdClient.Builder.stateDirectory(Path)` names where this client keeps its per-container
+  files — today the `resolv.conf` mounted into a networked container. The default lives under
+  `java.io.tmpdir`, which is writable by whoever is running and survives nothing: a host that
+  reboots with a container still running would leave that container's mount pointing at a file
+  that no longer exists. Anything long-lived should name a persistent path.
 - **DNS now reaches the container.** CNI reports nameservers but never applies them — that is the
   runtime's job — so until now a container had an address and a route and could not resolve a
   single name. A per-container `resolv.conf` is bind-mounted at `/etc/resolv.conf` and filled in

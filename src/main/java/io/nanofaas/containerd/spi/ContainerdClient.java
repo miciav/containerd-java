@@ -112,6 +112,24 @@ public interface ContainerdClient extends AutoCloseable {
          */
         Builder network(ContainerNetwork network);
 
+        /**
+         * Where per-container files this library owns are kept.
+         *
+         * <p>Today that is the {@code resolv.conf} bind-mounted into a networked container. It has
+         * to outlive nothing less than the container itself: the mount points at this file, so if
+         * it disappears while the container runs — a reboot clearing the default temporary
+         * directory would do it — the container is left with a mount pointing at nothing.
+         *
+         * <p>Defaults to a directory under {@code java.io.tmpdir}, which is writable by whoever is
+         * running and survives nothing. Anything long-lived should name a persistent path.
+         *
+         * @param stateDirectory directory for this client's per-container files; created when
+         *        first needed rather than now, so a client that never networks a container never
+         *        needs it to exist
+         * @return this builder
+         */
+        Builder stateDirectory(java.nio.file.Path stateDirectory);
+
         /** {@return a client connected to the configured socket} */
         ContainerdClient build();
     }

@@ -258,7 +258,13 @@ class ContainerNetworkLifecycleTest {
 
     private static ContainersServiceImpl service(FakeContainerd fake, ContainerNetwork network) {
         return new ContainersServiceImpl(fake.channel, "overlayfs", "io.containerd.runc.v2", null,
-                java.time.Duration.ofSeconds(1), network);
+                java.time.Duration.ofSeconds(1), network, ContainersServiceImpl.DEFAULT_STATE_DIR);
+    }
+
+    private static ContainersServiceImpl service(FakeContainerd fake, ContainerNetwork network,
+                                                 java.nio.file.Path stateDirectory) {
+        return new ContainersServiceImpl(fake.channel, "overlayfs", "io.containerd.runc.v2", null,
+                java.time.Duration.ofSeconds(1), network, stateDirectory);
     }
 
     private static ContainerSpec networked() {
@@ -434,6 +440,61 @@ class ContainerNetworkLifecycleTest {
             String resolvConf = fake.stored.getLabelsMap()
                     .get("io.nanofaas.containerd/dns.resolvconf");
             assertThat(java.nio.file.Files.readString(java.nio.file.Path.of(resolvConf))).isEmpty();
+        }
+    }
+
+    @Test
+    void theStateDirectoryIsWhereTheContainersFilesGo() throws Exception {
+        // What production needs: the mount points at this file, so it has to live somewhere that
+        // outlasts a reboot rather than under a temporary directory that will not.
+        java.nio.file.Path state = java.nio.file.Files.createTempDirectory("state-dir-test");
+        try (var fake = new FakeContainerd()) {
+            var net = new RecordingNetwork(fake.events);
+            net.attachment = new NetworkAttachment(List.of("10.99.0.9/16"), List.of("10.99.0.1"),
+                    List.of("10.99.0.1"), List.of(), null);
+            var containers = service(fake, net, state);
+            containers.create(networked());
+            containers.start("net-1");
+
+            java.nio.file.Path expected = state.resolve("net-1").resolve("resolv.conf");
+            assertThat(expected).exists();
+            assertThat(java.nio.file.Files.readString(expected)).contains("nameserver 10.99.0.1");
+            assertThat(fake.stored.getLabelsMap())
+                    .as("the path is recorded so a later process can find the same file")
+                    .containsEntry("io.nanofaas.containerd/dns.resolvconf", expected.toString());
+        }
+    }
+
+    @Test
+    void removingTheContainerTakesItsStateWithIt() throws Exception {
+        java.nio.file.Path state = java.nio.file.Files.createTempDirectory("state-dir-cleanup");
+        try (var fake = new FakeContainerd()) {
+            var containers = service(fake, new RecordingNetwork(fake.events), state);
+            containers.create(networked());
+            containers.start("net-1");
+            assertThat(state.resolve("net-1")).exists();
+
+            containers.remove("net-1", RemoveOptions.builder().force(true).build());
+
+            assertThat(state.resolve("net-1"))
+                    .as("a persistent state directory would otherwise fill up with dead containers")
+                    .doesNotExist();
+        }
+    }
+
+    @Test
+    void anUnusableStateDirectorySaysWhatToDoAboutIt() throws Exception {
+        // Its parent is a regular file, so the directory cannot be created. In production this is
+        // a wrong path or a permission problem, and the message has to name the way out.
+        java.nio.file.Path notADirectory = java.nio.file.Files.createTempFile("not-a-dir", "");
+        try (var fake = new FakeContainerd()) {
+            var containers = service(fake, new RecordingNetwork(fake.events),
+                    notADirectory.resolve("state"));
+            var spec = networked();
+
+            assertThatThrownBy(() -> containers.create(spec))
+                    .isInstanceOf(ContainerdException.class)
+                    .hasMessageContaining("stateDirectory");
         }
     }
 }

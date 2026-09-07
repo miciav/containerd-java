@@ -17,6 +17,9 @@ final class ContainerdClientBuilder implements ContainerdClient.Builder {
     private String runtimeBinaryName;
     private java.time.Duration stopTimeout = java.time.Duration.ofSeconds(10);
     private ContainerNetwork network;
+    // Null means "the client's default": the default belongs with the code that uses it, not
+    // spelled out a second time here where the two could drift.
+    private java.nio.file.Path stateDirectory;
 
     @Override
     public ContainerdClient.Builder socketPath(String socketPath) {
@@ -65,8 +68,14 @@ final class ContainerdClientBuilder implements ContainerdClient.Builder {
     }
 
     @Override
+    public ContainerdClient.Builder stateDirectory(java.nio.file.Path stateDirectory) {
+        this.stateDirectory = Objects.requireNonNull(stateDirectory, "stateDirectory");
+        return this;
+    }
+
+    @Override
     public ContainerdClient build() {
         return new DefaultContainerdClient(socketPath, namespace, snapshotter, runtimeName,
-                runtimeBinaryName, stopTimeout, network);
+                runtimeBinaryName, stopTimeout, network, stateDirectory);
     }
 }
