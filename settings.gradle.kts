@@ -4,12 +4,14 @@ plugins {
 
 rootProject.name = "containerd-java"
 
-// libcni-java is built from source when it sits next to this repository, which is how the CNI
-// source set resolves it: Gradle substitutes the dependency with the included build, so there is
-// nothing to publish first and no stale artifact to build against. Without the directory the
-// dependency falls back to a repository, and the CNI source set will not compile until
-// libcni-java is published somewhere it can be found — the core and its tests are unaffected.
+// libcni-java comes from GitHub Packages, and is built from source instead when it happens to sit
+// next to this repository. That ordering is deliberate: working on both at once then needs no
+// token and no publish step, while everyone else — CI included — resolves the published artifact,
+// which is the path that has to keep working.
+//
+// Set -PlibcniFromPackages=true to ignore the directory and use the package even when it is there.
 val libcni = file("../libcni-java")
-if (libcni.isDirectory) {
+val preferPackages = providers.gradleProperty("libcniFromPackages").orNull == "true"
+if (libcni.isDirectory && !preferPackages) {
     includeBuild(libcni)
 }

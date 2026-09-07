@@ -360,6 +360,28 @@ It is a separate artifact on purpose: it pulls
 [libcni-java](https://github.com/miciav/libcni-java) and, through it, Gson, and the core has no
 JSON dependency by design. Consumers who do not want CNI never see either.
 
+libcni-java is published to GitHub Packages, which requires a token to read even a public package,
+unlike Maven Central:
+
+```kotlin
+repositories {
+    maven {
+        url = uri("https://maven.pkg.github.com/miciav/libcni-java")
+        credentials {
+            username = System.getenv("GITHUB_ACTOR")
+            password = System.getenv("GITHUB_TOKEN")   // needs read:packages
+        }
+        content { includeGroup("io.libcni") }   // only this group, so the core needs no token
+    }
+}
+```
+
+When libcni-java happens to sit next to this repository it is built from source instead, so
+working on both at once needs neither a token nor a publish step. Pass
+`-PlibcniFromPackages=true` to use the published artifact anyway. CI never has the directory, so
+it always exercises the published path — a broken publish is caught there rather than by a
+consumer.
+
 The timing is the library's responsibility rather than the caller's, because it is easy to get
 wrong and expensive when you do: the namespace CNI configures is the task's, so it exists only
 between the task starting and being torn down. Detaching after the task has gone finds nothing to

@@ -27,9 +27,19 @@ val assertjVersion = "3.27.3"
 val javaxAnnotationVersion = "1.3.2"
 
 repositories {
-    // libcni-java is consumed from the local repository until it is published anywhere else.
-    mavenLocal()
     mavenCentral()
+    // libcni-java, for the optional CNI source set. GitHub Packages needs credentials even to
+    // read a public package, unlike Maven Central: a token with read:packages. Declared for the
+    // CNI configurations only, so nobody building the core has to have one.
+    maven {
+        name = "GitHubPackages"
+        url = uri("https://maven.pkg.github.com/miciav/libcni-java")
+        credentials {
+            username = System.getenv("GITHUB_ACTOR") ?: providers.gradleProperty("gpr.user").orNull
+            password = System.getenv("GITHUB_TOKEN") ?: providers.gradleProperty("gpr.token").orNull
+        }
+        content { includeGroup("io.libcni") }
+    }
 }
 
 java {

@@ -13,6 +13,10 @@ concurrency:
 
 permissions:
   contents: read
+  # libcni-java is resolved from GitHub Packages, which needs a token even to read a public
+  # package. Deliberately not checked out next door: CI exercises the path every other consumer
+  # takes, so a broken publish is caught here rather than by them.
+  packages: read
 
 jobs:
   unit:
@@ -22,13 +26,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           path: containerd-java
-
-      # Built from source next door, which is how the CNI source set resolves it. GitHub cannot
-      # check out above the workspace, so both repositories are siblings inside it.
-      - uses: actions/checkout@v7
-        with:
-          repository: miciav/libcni-java
-          path: libcni-java
 
       - uses: actions/setup-java@v6
         with:
@@ -42,6 +39,9 @@ jobs:
 
       - name: Build and run unit tests
         working-directory: containerd-java
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./gradlew build --stacktrace
 
       - name: Upload test report
@@ -59,13 +59,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           path: containerd-java
-
-      # Built from source next door, which is how the CNI source set resolves it. GitHub cannot
-      # check out above the workspace, so both repositories are siblings inside it.
-      - uses: actions/checkout@v7
-        with:
-          repository: miciav/libcni-java
-          path: libcni-java
 
       # GraalVM rather than a plain JDK: it is a JDK 25 like any other for the integration tests,
       # and it also carries native-image, so one job covers both without installing containerd twice.
@@ -116,6 +109,9 @@ jobs:
 
       - name: Run integration tests
         working-directory: containerd-java
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./gradlew integrationTest --stacktrace
 
       # The integration tests skip themselves via JUnit Assumptions when containerd is not
@@ -164,7 +160,11 @@ jobs:
       - name: Run the CNI networking tests
         working-directory: containerd-java
         # Root, and a Gradle home of its own so it does not take ownership of the runner user's.
-        run: sudo ./gradlew -g /tmp/gradle-root cniIntegrationTest --stacktrace
+        # -E so root keeps the credentials that resolve libcni-java.
+        run: sudo -E ./gradlew -g /tmp/gradle-root cniIntegrationTest --stacktrace
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Root still writes its test results and generated sources into build/, and every later step
       # runs as the runner user, which then cannot even delete them. Always, so that a failing CNI
@@ -176,6 +176,9 @@ jobs:
 
       - name: Build the example as a native image
         working-directory: containerd-java
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./gradlew nativeCompile --stacktrace
 
       - name: Run the native image against containerd
