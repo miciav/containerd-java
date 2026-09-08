@@ -18,9 +18,8 @@ Run with:
     .venv-e2e/bin/python e2e/containerd_java_e2e.py
 
 The multipass extra is what supplies the Multipass SDK and pydantic; without it the import of
-sonata_tasks.vm.models fails. See docs/end-to-end.md for the environment variables -- E2E_ARCH
-has to be set on an x86-64 host -- and for keeping the VM with KEEP_VM=1, which skips the release
-and leaves cleanup to you.
+sonata_tasks.vm.models fails. See docs/end-to-end.md for the environment variables, and for
+keeping the VM with KEEP_VM=1, which skips the release and leaves cleanup to you.
 """
 
 from __future__ import annotations
@@ -54,7 +53,6 @@ VM_NAME = os.environ.get("E2E_VM_NAME", "cjava-workflow")
 # Pinned rather than "latest": a scenario that reports what the libraries do has to run against a
 # stated containerd, or a failure cannot be told apart from an upstream change.
 NERDCTL_VERSION = "2.3.5"
-NERDCTL_ARCH = os.environ.get("E2E_ARCH", "arm64")
 NETWORK = "cjava-e2e"
 REMOTE_HOME = "/home/ubuntu"
 SSH_READY_TIMEOUT = 300
@@ -94,8 +92,11 @@ sudo apt-get update -qq
 # crun is the runtime under test; uidmap and dbus-user-session are what let containerd run
 # rootless at all; the JRE runs the demo.
 sudo apt-get install -y -qq crun uidmap dbus-user-session openjdk-25-jre-headless curl
+# The architecture is the VM's to report, not this machine's to assume: the bundle runs there.
+# dpkg names it the same way nerdctl's release assets do (amd64, arm64), so no mapping is needed.
+ARCH=$(dpkg --print-architecture)
 curl -fsSL -o /tmp/nerdctl-full.tgz \
-  https://github.com/containerd/nerdctl/releases/download/v{NERDCTL_VERSION}/nerdctl-full-{NERDCTL_VERSION}-linux-{NERDCTL_ARCH}.tar.gz
+  https://github.com/containerd/nerdctl/releases/download/v{NERDCTL_VERSION}/nerdctl-full-{NERDCTL_VERSION}-linux-$ARCH.tar.gz
 sudo tar Cxzf /usr/local /tmp/nerdctl-full.tgz
 # Ubuntu confines unprivileged user namespaces with AppArmor, and RootlessKit needs one: without
 # this profile the setup below fails with "fork/exec /proc/self/exe: permission denied", which

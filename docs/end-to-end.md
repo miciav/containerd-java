@@ -59,8 +59,12 @@ All of them are environment variables read at import time.
 | Variable | Default | What it is for |
 |----------|---------|----------------|
 | `E2E_VM_NAME` | `cjava-workflow` | The VM's name. Change it to run two scenarios side by side. |
-| `E2E_ARCH` | `arm64` | The architecture of the nerdctl-full bundle to download. **Set this to `amd64` on an x86-64 host**: the default matches the machine this was written on, and a mismatch fails in unit 003 while unpacking. |
 | `KEEP_VM` | unset | Leaves the VM running instead of deleting it. |
+
+There is deliberately no architecture setting. The nerdctl bundle runs in the VM, so the VM is
+what decides which one it needs: unit 003 asks it with `dpkg --print-architecture`, whose names
+are the ones nerdctl's release assets use. A local default would only ever be right for whoever
+set it, and wrong for everyone else in a way that surfaces as a tar error.
 
 The network name, its subnet and the pinned nerdctl version are constants in the file rather than
 variables. The version is pinned deliberately: a scenario that reports what the libraries do has

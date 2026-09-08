@@ -249,7 +249,7 @@ uv venv .venv-e2e && uv pip install --python .venv-e2e \
 ```
 
 [docs/end-to-end.md](docs/end-to-end.md) covers the rest: what each unit does, the environment
-variables (including `E2E_ARCH`, which must be set on an x86-64 host), how to keep the VM for a
+variables, how to keep the VM for a
 second look and clean it up afterwards, how to run the demo on its own against a local containerd,
 and the obstacles — AppArmor and unprivileged user namespaces, `user.home` inside them — that
 anyone reproducing this by hand will meet.
